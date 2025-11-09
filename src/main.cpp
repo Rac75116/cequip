@@ -11,7 +11,6 @@
 #include <stdexcept>
 #include <string>
 #include <system_error>
-#include <unordered_set>
 #include <vector>
 
 struct temporary_directory {
@@ -45,7 +44,6 @@ struct hook_state : boost::noncopyable {
     std::uint64_t unique_id = 0;
     bool processing_directive = false;
     bool generated_dummy_include_file = false;
-    std::unordered_set<std::string> included_files;
 
     hook_state(const std::filesystem::path& tmp_dir) : tmp_dir(tmp_dir) {}
 };
@@ -105,11 +103,38 @@ class custom_hooks : public boost::wave::context_policies::default_preprocessing
             native_name = dummy_include_path.string();
             return true;
         }
-        if (state.included_files.insert(file_path).second) {
-            spdlog::info("Including file: {}", file_path);
+
+        try {
+            const auto src_path = std::filesystem::path(dir_path) / file_path;
+            std::ifstream in(src_path, std::ios::binary);
+            if (!in.is_open()) {
+                BOOST_WAVE_THROW_CTX(ctx, boost::wave::preprocess_exception, bad_include_file,
+                                     file_path.c_str(), ctx.get_main_pos());
+                return false;
+            }
+            std::string buf((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+            in.close();
+
+            if (!buf.empty() && buf.back() != '\n') {
+                buf.push_back('\n');
+            }
+
+            auto out_path = state.tmp_dir / ("include_" + std::to_string(state.unique_id++));
+            std::ofstream out(out_path, std::ios::binary | std::ios::trunc);
+            if (!out.is_open()) {
+                BOOST_WAVE_THROW_CTX(ctx, boost::wave::preprocess_exception, bad_include_file,
+                                     file_path.c_str(), ctx.get_main_pos());
+                return false;
+            }
+            out.write(buf.data(), static_cast<std::streamsize>(buf.size()));
+            out.close();
+            native_name = out_path.string();
+            return true;
+        } catch (...) {
+            BOOST_WAVE_THROW_CTX(ctx, boost::wave::preprocess_exception, bad_include_file,
+                                 file_path.c_str(), ctx.get_main_pos());
+            return false;
         }
-        native_name = file_path;
-        return true;
     }
 
     template <typename ContextT>
