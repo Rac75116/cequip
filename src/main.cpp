@@ -1,6 +1,7 @@
 #include <spdlog/spdlog.h>
 
 #include <CLI/CLI.hpp>
+#include <algorithm>
 #include <boost/wave.hpp>
 #include <boost/wave/cpplexer/cpp_lex_iterator.hpp>
 #include <boost/wave/language_support.hpp>
@@ -38,11 +39,22 @@ struct temporary_directory {
     }
 };
 
-auto generate_prohibited_macros(const std::string& compiler, auto lang) {
-    std::vector<std::string_view> result = {
-        "__DATE__",
-        "__TIME__",
-    };
+auto generate_prohibited_macros(const std::string& compiler, [[maybe_unused]] auto lang) {
+    std::vector<std::string_view> result;
+    if (compiler == "gcc" || compiler == "clang") {
+        result = {
+            "__DATE__",      "__TIME__",      "__TIMESTAMP__",     "__COUNTER__",
+            "__BASE_FILE__", "__FILE_NAME__", "__INCLUDE_LEVEL__",
+        };
+    }
+    if (compiler == "msvc") {
+        result = {
+            "__DATE__",
+            "__TIME__",
+            "__TIMESTAMP__",
+            "__COUNTER__",
+        };
+    }
     std::sort(result.begin(), result.end());
     return result;
 }
@@ -50,7 +62,94 @@ auto generate_prohibited_macros(const std::string& compiler, auto lang) {
 void predefine_macros(auto& ctx, const std::string& compiler, auto lang) {
     ctx.add_macro_definition("true=1", true);
     ctx.add_macro_definition("false=0", true);
-}
+
+    const bool is_cpp = !!(lang & boost::wave::support_cpp);
+
+    if (compiler == "gcc") {
+        const int gnu_major = 99;
+        const int gnu_minor = 0;
+        const int gnu_patch = 0;
+
+        ctx.add_macro_definition("__GNUC__=" + std::to_string(gnu_major), true);
+        ctx.add_macro_definition("__GNUC_MINOR__=" + std::to_string(gnu_minor), true);
+        ctx.add_macro_definition("__GNUC_PATCHLEVEL__=" + std::to_string(gnu_patch), true);
+
+        if (is_cpp) {
+            ctx.add_macro_definition("__GNUG__=" + std::to_string(gnu_major), true);
+            ctx.add_macro_definition("__GXX_WEAK__=1", true);
+            ctx.add_macro_definition("__EXCEPTIONS=1", true);
+            ctx.add_macro_definition("__GXX_RTTI=1", true);
+            ctx.add_macro_definition("__DEPRECATED=1", true);
+        }
+
+        ctx.add_macro_definition("__STRICT_ANSI__=1", true);
+
+        ctx.add_macro_definition(std::string("__VERSION__=\"GCC ") + std::to_string(gnu_major) +
+                                     "." + std::to_string(gnu_minor) + "." +
+                                     std::to_string(gnu_patch) + "\"",
+                                 true);
+    } else if (compiler == "clang") {
+        const int clang_major = 99;
+        const int clang_minor = 0;
+        const int clang_patch = 0;
+
+        ctx.add_macro_definition("__clang__=1", true);
+        ctx.add_macro_definition("__clang_major__=" + std::to_string(clang_major), true);
+        ctx.add_macro_definition("__clang_minor__=" + std::to_string(clang_minor), true);
+        ctx.add_macro_definition("__clang_patchlevel__=" + std::to_string(clang_patch), true);
+        ctx.add_macro_definition(
+            std::string("__clang_version__=\"Clang ") + std::to_string(clang_major) + "." +
+                std::to_string(clang_minor) + "." + std::to_string(clang_patch) + "\"",
+            true);
+        ctx.add_macro_definition("__clang_literal_encoding__=\"UTF-8\"", true);
+        ctx.add_macro_definition("__clang_wide_literal_encoding__=\"UTF-32\"", true);
+        ctx.add_macro_definition("__GNUC__=" + std::to_string(clang_major), true);
+        ctx.add_macro_definition("__GNUC_MINOR__=" + std::to_string(clang_minor), true);
+        ctx.add_macro_definition("__GNUC_PATCHLEVEL__=" + std::to_string(clang_patch), true);
+
+        if (is_cpp) {
+            ctx.add_macro_definition("__GNUG__=" + std::to_string(clang_major), true);
+            ctx.add_macro_definition("__DEPRECATED=1", true);
+            ctx.add_macro_definition("__EXCEPTIONS=1", true);
+            ctx.add_macro_definition("__GXX_RTTI=1", true);
+        }
+
+        ctx.add_macro_definition("__STRICT_ANSI__=1", true);
+
+        ctx.add_macro_definition(std::string("__VERSION__=\"Clang ") + std::to_string(clang_major) +
+                                     "." + std::to_string(clang_minor) + "." +
+                                     std::to_string(clang_patch) + "\"",
+                                 true);
+    } else if (compiler == "msvc") {
+        const int _MSC_VER_val = 9999;
+        const int _MSC_FULL_VER_val = 999900000;
+        const int _MSC_BUILD_val = 0;
+
+        ctx.add_macro_definition("_MSC_VER=" + std::to_string(_MSC_VER_val), true);
+        ctx.add_macro_definition("_MSC_FULL_VER=" + std::to_string(_MSC_FULL_VER_val), true);
+        ctx.add_macro_definition("_MSC_BUILD=" + std::to_string(_MSC_BUILD_val), true);
+        ctx.add_macro_definition("_MSC_EXTENSIONS=1", true);
+        ctx.add_macro_definition("__STDC_HOSTED__=1", true);
+
+        if (is_cpp) {
+            ctx.add_macro_definition("_CPPUNWIND=1", true);
+            ctx.add_macro_definition("_CPPRTTI=1", true);
+
+            if (lang & boost::wave::support_cpp2a) {
+                ctx.add_macro_definition("_MSVC_LANG=202302L", true);
+            } else if (lang & boost::wave::support_cpp20) {
+                ctx.add_macro_definition("_MSVC_LANG=202002L", true);
+            } else if (lang & boost::wave::support_cpp17) {
+                ctx.add_macro_definition("_MSVC_LANG=201703L", true);
+            }
+        }
+
+        ctx.add_macro_definition(std::string("__VERSION__=\"MSVC ") +
+                                     std::to_string(_MSC_VER_val / 100) + "." +
+                                     std::to_string(_MSC_VER_val % 100) + "\"",
+                                 true);
+    }
+};
 
 struct hook_state : boost::noncopyable {
     std::ostringstream result;
