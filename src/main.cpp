@@ -83,16 +83,6 @@ class custom_hooks : public boost::wave::context_policies::default_preprocessing
                macro.get_value() == "__TIME__";
     }
 
-    /*
-    template <typename ContextT, typename ContainerT>
-    void expanded_macro(ContextT const&, ContainerT const&) {}
-    */
-
-    /*
-    template <typename ContextT, typename ContainerT>
-    void rescanned_macro(ContextT const&, ContainerT const&) {}
-    */
-
     template <typename ContextT>
     bool locate_include_file(ContextT& ctx, std::string& file_path, bool is_system,
                              char const* current_name, std::string& dir_path,
@@ -347,7 +337,8 @@ int main(int argc, char** argv) {
         auto temp_directory_path = temporary_directory();
         hook_state state(temp_directory_path.path);
         context_type ctx(contents.begin(), contents.end(), path.c_str(), custom_hooks(state));
-        ctx.set_language(lang);
+        ctx.set_language(static_cast<boost::wave::language_support>(
+            lang | boost::wave::support_option_preserve_comments));
         for (const auto& inc_path : include_paths) {
             ctx.add_include_path(inc_path.c_str());
         }
@@ -358,10 +349,7 @@ int main(int argc, char** argv) {
         }
 
         try {
-            context_type::iterator_type first = ctx.begin();
-            context_type::iterator_type last = ctx.end();
-            while (first != last) {
-                ++first;
+            for (auto it = ctx.begin(); it != ctx.end(); ++it) {
             }
         } catch (const boost::wave::preprocess_exception& e) {
             spdlog::error("Preprocessing error: {}", e.description());

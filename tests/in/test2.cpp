@@ -10,6 +10,12 @@ inline void test_function() { std::cout << "Test function executed." << std::end
 inline void test_function() { std::cout << "This should not appear." << std::endl; }
 #endif
 
+// Test Comments
+/* Test Comments */
+/*
+#include <should_not_be_included.hpp>
+*/
+
 int main() {
     test_function();
     return 0;
