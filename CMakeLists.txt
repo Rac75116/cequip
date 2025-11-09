@@ -36,6 +36,7 @@ target_link_libraries(cequip PRIVATE spdlog::spdlog)
 
 target_precompile_headers(cequip PRIVATE
     <boost/wave.hpp>
+    <boost/wave/cpplexer/cpp_lex_iterator.hpp>
     <CLI/CLI.hpp>
     <spdlog/spdlog.h>
 )

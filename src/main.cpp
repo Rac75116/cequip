@@ -5,14 +5,7 @@
 #include <fstream>
 #include <system_error>
 
-inline std::string Expand(const std::string& content,
-                          const std::vector<std::filesystem::path>& include_paths,
-                          const std::vector<std::pair<std::string, std::string>>& definitions) {
-    if (include_paths.empty() && definitions.empty()) {
-        return content;
-    }
-    return content;
-}
+#include "expand.hpp"
 
 int main(int argc, char** argv) {
     CLI::App app;
@@ -23,7 +16,7 @@ int main(int argc, char** argv) {
     std::string input_file_raw;
     app.add_option("file", input_file_raw, "Input file to process");
 
-    std::string output_file_raw;
+    std::string output_file_raw = "stdout";
     app.add_option("-o,--output", output_file_raw, "Output file (default: stdout)");
 
     std::vector<std::string> include_paths_raw;
@@ -34,6 +27,10 @@ int main(int argc, char** argv) {
 
     bool quiet_flag = false;
     app.add_flag("-q,--quiet", quiet_flag, "Suppress non-error output");
+
+    std::string lang_str = "cpp23";
+    app.add_option("--lang", lang_str,
+                   "Language standard (c99, cpp98, cpp11, cpp17, cpp20, cpp23)");
 
     CLI11_PARSE(app, argc, argv);
 
@@ -50,10 +47,6 @@ int main(int argc, char** argv) {
     if (input_file_raw.empty()) {
         spdlog::error("No input files provided. Use --help for usage information.");
         return 1;
-    }
-
-    if (output_file_raw.empty()) {
-        output_file_raw = "stdout";
     }
 
     std::error_code ec;
@@ -97,17 +90,31 @@ int main(int argc, char** argv) {
         include_paths.push_back(inc_path);
     }
 
-    std::vector<std::pair<std::string, std::string>> def_pairs;
-    for (const auto& def : definitions) {
-        auto pos = def.find('=');
-        if (pos == std::string::npos) {
-            def_pairs.emplace_back(def, "1");
-        } else {
-            def_pairs.emplace_back(def.substr(0, pos), def.substr(pos + 1));
-        }
+    LanguageSupport lang;
+    if (lang_str == "c99") {
+        lang = LanguageSupport::c99;
+    } else if (lang_str == "cpp98") {
+        lang = LanguageSupport::cpp98;
+    } else if (lang_str == "cpp11") {
+        lang = LanguageSupport::cpp11;
+    } else if (lang_str == "cpp17") {
+        lang = LanguageSupport::cpp17;
+    } else if (lang_str == "cpp20") {
+        lang = LanguageSupport::cpp20;
+    } else if (lang_str == "cpp23") {
+        lang = LanguageSupport::cpp23;
+    } else {
+        spdlog::error("Unknown language standard: {}", lang_str);
+        return 1;
     }
 
-    const auto result = Expand(contents, include_paths, def_pairs);
+    std::string result;
+    try {
+        result = Expand(contents, include_paths, definitions, path, lang);
+    } catch (const std::runtime_error& e) {
+        spdlog::error("Error during preprocessing: {}", e.what());
+        return 1;
+    }
 
     if (output_file_raw == "stdout") {
         std::cout << result;
