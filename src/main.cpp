@@ -1,11 +1,239 @@
 #include <spdlog/spdlog.h>
 
 #include <CLI/CLI.hpp>
+#include <boost/wave.hpp>
+#include <boost/wave/cpplexer/cpp_lex_iterator.hpp>
+#include <boost/wave/language_support.hpp>
 #include <filesystem>
 #include <fstream>
+#include <random>
+#include <sstream>
+#include <stdexcept>
+#include <string>
 #include <system_error>
+#include <unordered_set>
+#include <vector>
 
-#include "expand.hpp"
+struct temporary_directory {
+    std::filesystem::path path;
+    temporary_directory() {
+        std::error_code ec;
+        path = std::filesystem::temp_directory_path(ec);
+        if (ec) {
+            throw std::runtime_error("Failed to get system temporary directory: " + ec.message());
+        }
+        path /= std::filesystem::path("cequip_tmp_" + std::to_string(std::random_device{}()));
+        std::filesystem::create_directories(path, ec);
+        if (ec) {
+            throw std::runtime_error("Failed to create temporary directory '" + path.string() +
+                                     "': " + ec.message());
+        }
+    }
+    ~temporary_directory() {
+        std::error_code ec;
+        std::filesystem::remove_all(path, ec);
+        if (ec) {
+            spdlog::warn("Failed to remove temporary directory '{}': {}", path.string(),
+                         ec.message());
+        }
+    }
+};
+
+struct hook_state : boost::noncopyable {
+    std::ostringstream result;
+    std::filesystem::path tmp_dir;
+    std::uint64_t unique_id = 0;
+    bool processing_directive = false;
+    bool generated_dummy_include_file = false;
+    std::unordered_set<std::string> included_files;
+
+    hook_state(const std::filesystem::path& tmp_dir) : tmp_dir(tmp_dir) {}
+};
+
+class custom_hooks : public boost::wave::context_policies::default_preprocessing_hooks {
+    using base = boost::wave::context_policies::default_preprocessing_hooks;
+
+    hook_state& state;
+
+    template <typename ContainerT>
+    void log_container(ContainerT const& container) {
+        for (const auto& tok : container) {
+            if (!tok.is_valid()) {
+                continue;
+            }
+            state.result << tok.get_value();
+        }
+    }
+
+   public:
+    custom_hooks(hook_state& hook_state) : state(hook_state) {}
+
+    template <typename ContextT, typename TokenT, typename ContainerT, typename IteratorT>
+    bool expanding_function_like_macro(ContextT const&, TokenT const&, std::vector<TokenT> const&,
+                                       ContainerT const&, TokenT const&,
+                                       std::vector<ContainerT> const&, IteratorT const&,
+                                       IteratorT const&) {
+        return !state.processing_directive;
+    }
+
+    template <typename ContextT, typename TokenT, typename ContainerT>
+    bool expanding_object_like_macro(ContextT const&, TokenT const& macro, ContainerT const&,
+                                     TokenT const&) {
+        return !state.processing_directive || macro.get_value() == "__DATE__" ||
+               macro.get_value() == "__TIME__";
+    }
+
+    /*
+    template <typename ContextT, typename ContainerT>
+    void expanded_macro(ContextT const&, ContainerT const&) {}
+    */
+
+    /*
+    template <typename ContextT, typename ContainerT>
+    void rescanned_macro(ContextT const&, ContainerT const&) {}
+    */
+
+    template <typename ContextT>
+    bool locate_include_file(ContextT& ctx, std::string& file_path, bool is_system,
+                             char const* current_name, std::string& dir_path,
+                             std::string& native_name) {
+        if (!ctx.find_include_file(file_path, dir_path, false, current_name)) {
+            state.result << "#include " << (is_system ? '<' : '"') << file_path
+                         << (is_system ? '>' : '"') << "\n";
+            auto dummy_include_path = state.tmp_dir / "dummy_include";
+            if (!state.generated_dummy_include_file) {
+                std::error_code ec;
+                std::ofstream temp_file(dummy_include_path, std::ios::trunc);
+                if (!temp_file.is_open()) {
+                    BOOST_WAVE_THROW_CTX(ctx, boost::wave::preprocess_exception, bad_include_file,
+                                         file_path.c_str(), ctx.get_main_pos());
+                    return false;
+                }
+                temp_file.close();
+                state.generated_dummy_include_file = true;
+            }
+            native_name = dummy_include_path.string();
+            return true;
+        }
+        if (state.included_files.insert(file_path).second) {
+            spdlog::info("Including file: {}", file_path);
+        }
+        native_name = file_path;
+        return true;
+    }
+
+    template <typename ContextT>
+    bool found_include_directive(ContextT const&, std::string const&, bool) {
+        state.processing_directive = true;
+        return false;
+    }
+
+    template <typename ContextT, typename TokenT>
+    void detected_pragma_once(ContextT const&, TokenT const&, std::string const&) {
+        state.processing_directive = false;
+    }
+
+    template <typename ContextT, typename ContainerT>
+    bool interpret_pragma(ContextT const&, ContainerT&, typename ContextT::token_type const& option,
+                          ContainerT const& values, typename ContextT::token_type const&) {
+        state.result << "#pragma " << option.get_value() << ' ';
+        log_container(values);
+        state.result << '\n';
+        state.processing_directive = false;
+        return true;
+    }
+
+    template <typename ContextT, typename TokenT, typename ParametersT, typename DefinitionT>
+    void defined_macro(ContextT const&, TokenT const& macro_name, bool is_functionlike,
+                       ParametersT const& parameters, DefinitionT const& definition,
+                       bool is_predefined) {
+        if (!is_predefined) {
+            state.result << "#define " << macro_name.get_value();
+            if (is_functionlike) {
+                state.result << '(';
+                for (std::size_t i = 0; i < parameters.size(); ++i) {
+                    state.result << parameters[i].get_value();
+                    if (i + 1 < parameters.size()) {
+                        state.result << ", ";
+                    }
+                }
+                state.result << ')';
+            }
+            state.result << ' ';
+            for (const auto& tok : definition) {
+                state.result << tok.get_value();
+            }
+            state.result << '\n';
+        }
+        state.processing_directive = false;
+    }
+
+    template <typename ContextT, typename TokenT>
+    void undefined_macro(ContextT const&, TokenT const& macro_name) {
+        state.result << "#undef " << macro_name.get_value() << '\n';
+        state.processing_directive = false;
+    }
+
+    template <typename ContextT, typename TokenT>
+    bool found_directive(ContextT const&, TokenT const&) {
+        state.processing_directive = true;
+        return false;
+    }
+
+    template <typename ContextT, typename ContainerT>
+    bool found_unknown_directive(ContextT const&, ContainerT const& line, ContainerT&) {
+        log_container(line);
+        state.result << '\n';
+        state.processing_directive = false;
+        return false;
+    }
+
+    template <typename ContextT, typename TokenT, typename ContainerT>
+    bool evaluated_conditional_expression(ContextT const&, TokenT const&, ContainerT const&, bool) {
+        state.processing_directive = false;
+        return false;
+    }
+
+    template <typename ContextT, typename TokenT>
+    TokenT const& generated_token(ContextT const&, TokenT const& token) {
+        if (token.is_valid()) {
+            const auto value = token.get_value();
+            if (value == "\r\n" || value == "\r") {
+                state.result << '\n';
+            } else {
+                state.result << token.get_value();
+            }
+        }
+        return token;
+    }
+
+    template <typename ContextT, typename ContainerT>
+    bool found_warning_directive(ContextT const&, ContainerT const& message) {
+        state.result << "#warning ";
+        log_container(message);
+        state.result << '\n';
+        state.processing_directive = false;
+        return true;
+    }
+
+    template <typename ContextT, typename ContainerT>
+    bool found_error_directive(ContextT const&, ContainerT const& message) {
+        state.result << "#error ";
+        log_container(message);
+        state.result << '\n';
+        state.processing_directive = false;
+        return true;
+    }
+
+    template <typename ContextT, typename ContainerT>
+    void found_line_directive(ContextT const&, ContainerT const& arguments, unsigned int,
+                              std::string const&) {
+        state.result << "#line ";
+        log_container(arguments);
+        state.result << '\n';
+        state.processing_directive = false;
+    }
+};
 
 int main(int argc, char** argv) {
     CLI::App app;
@@ -20,10 +248,10 @@ int main(int argc, char** argv) {
     app.add_option("-o,--output", output_file_raw, "Output file (default: stdout)");
 
     std::vector<std::string> include_paths_raw;
-    app.add_option("-I,--include", include_paths_raw, "Include paths for preprocessing");
+    app.add_option("-i,--include", include_paths_raw, "Include paths for preprocessing");
 
     std::vector<std::string> definitions;
-    app.add_option("-D,--define", definitions, "Preprocessor definitions");
+    app.add_option("-d,--define", definitions, "Preprocessor definitions");
 
     bool quiet_flag = false;
     app.add_flag("-q,--quiet", quiet_flag, "Suppress non-error output");
@@ -90,30 +318,59 @@ int main(int argc, char** argv) {
         include_paths.push_back(inc_path);
     }
 
-    LanguageSupport lang;
+    boost::wave::language_support lang;
     if (lang_str == "c99") {
-        lang = LanguageSupport::c99;
+        lang = boost::wave::language_support::support_c99;
     } else if (lang_str == "cpp98") {
-        lang = LanguageSupport::cpp98;
+        lang = boost::wave::language_support::support_cpp;
     } else if (lang_str == "cpp11") {
-        lang = LanguageSupport::cpp11;
+        lang = boost::wave::language_support::support_cpp11;
     } else if (lang_str == "cpp17") {
-        lang = LanguageSupport::cpp17;
+        lang = boost::wave::language_support::support_cpp17;
     } else if (lang_str == "cpp20") {
-        lang = LanguageSupport::cpp20;
+        lang = boost::wave::language_support::support_cpp20;
     } else if (lang_str == "cpp23") {
-        lang = LanguageSupport::cpp23;
+        lang = boost::wave::language_support::support_cpp2a;
     } else {
         spdlog::error("Unknown language standard: {}", lang_str);
         return 1;
     }
 
     std::string result;
-    try {
-        result = Expand(contents, include_paths, definitions, path, lang);
-    } catch (const std::runtime_error& e) {
-        spdlog::error("Error during preprocessing: {}", e.what());
-        return 1;
+    {
+        typedef boost::wave::cpplexer::lex_iterator<boost::wave::cpplexer::lex_token<>>
+            lex_iterator_type;
+        typedef boost::wave::context<std::string::iterator, lex_iterator_type,
+                                     boost::wave::iteration_context_policies::load_file_to_string,
+                                     custom_hooks>
+            context_type;
+        auto temp_directory_path = temporary_directory();
+        hook_state state(temp_directory_path.path);
+        context_type ctx(contents.begin(), contents.end(), path.c_str(), custom_hooks(state));
+        ctx.set_language(lang);
+        for (const auto& inc_path : include_paths) {
+            ctx.add_include_path(inc_path.c_str());
+        }
+        ctx.add_macro_definition("true=1", true);
+        ctx.add_macro_definition("false=0", true);
+        for (const auto& def : definitions) {
+            ctx.add_macro_definition(def, true);
+        }
+
+        try {
+            context_type::iterator_type first = ctx.begin();
+            context_type::iterator_type last = ctx.end();
+            while (first != last) {
+                ++first;
+            }
+        } catch (const boost::wave::preprocess_exception& e) {
+            spdlog::error("Preprocessing error: {}", e.description());
+            return 1;
+        } catch (boost::wave::cpplexer::lexing_exception& e) {
+            spdlog::error("Lexing error: {}", e.description());
+            return 1;
+        }
+        result = state.result.str();
     }
 
     if (output_file_raw == "stdout") {
@@ -129,6 +386,8 @@ int main(int argc, char** argv) {
         output_file << result;
         output_file.close();
     }
+
+    spdlog::info("Preprocessing completed successfully.");
 
     return 0;
 }
