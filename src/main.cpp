@@ -38,14 +38,38 @@ struct temporary_directory {
     }
 };
 
+auto generate_prohibited_macros(const std::string& compiler, auto lang) {
+    std::vector<std::string_view> result = {
+        "__DATE__",
+        "__TIME__",
+    };
+    std::sort(result.begin(), result.end());
+    return result;
+}
+
+void predefine_macros(auto& ctx, const std::string& compiler, auto lang) {
+    ctx.add_macro_definition("true=1", true);
+    ctx.add_macro_definition("false=0", true);
+}
+
 struct hook_state : boost::noncopyable {
     std::ostringstream result;
     std::filesystem::path tmp_dir;
     std::uint64_t unique_id = 0;
     bool processing_directive = false;
     bool generated_dummy_include_file = false;
+    std::vector<std::string_view> prohibited_macros;
+    std::map<std::string, std::string> correct_paths;
 
     hook_state(const std::filesystem::path& tmp_dir) : tmp_dir(tmp_dir) {}
+
+    std::string get_correct_path(const std::string& path) {
+        auto it = correct_paths.find(path);
+        if (it != correct_paths.end()) {
+            return it->second;
+        }
+        return path;
+    }
 };
 
 class custom_hooks : public boost::wave::context_policies::default_preprocessing_hooks {
@@ -77,8 +101,12 @@ class custom_hooks : public boost::wave::context_policies::default_preprocessing
     template <typename ContextT, typename TokenT, typename ContainerT>
     bool expanding_object_like_macro(ContextT const&, TokenT const& macro, ContainerT const&,
                                      TokenT const&) {
-        return !state.processing_directive || macro.get_value() == "__DATE__" ||
-               macro.get_value() == "__TIME__";
+        const auto macro_name = macro.get_value();
+        if (std::binary_search(state.prohibited_macros.begin(), state.prohibited_macros.end(),
+                               std::string_view(macro_name.data(), macro_name.size()))) {
+            return true;
+        }
+        return !state.processing_directive;
     }
 
     template <typename ContextT>
@@ -105,7 +133,14 @@ class custom_hooks : public boost::wave::context_policies::default_preprocessing
         }
 
         try {
-            const auto src_path = std::filesystem::path(dir_path) / file_path;
+            auto src_path = std::filesystem::path(dir_path) / file_path;
+            std::error_code ec;
+            src_path = std::filesystem::canonical(src_path, ec);
+            if (ec) {
+                BOOST_WAVE_THROW_CTX(ctx, boost::wave::preprocess_exception, bad_include_file,
+                                     file_path.c_str(), ctx.get_main_pos());
+                return false;
+            }
             std::ifstream in(src_path, std::ios::binary);
             if (!in.is_open()) {
                 BOOST_WAVE_THROW_CTX(ctx, boost::wave::preprocess_exception, bad_include_file,
@@ -129,6 +164,7 @@ class custom_hooks : public boost::wave::context_policies::default_preprocessing
             out.write(buf.data(), static_cast<std::streamsize>(buf.size()));
             out.close();
             native_name = out_path.string();
+            state.correct_paths[native_name] = src_path.string();
             return true;
         } catch (...) {
             BOOST_WAVE_THROW_CTX(ctx, boost::wave::preprocess_exception, bad_include_file,
@@ -268,6 +304,9 @@ int main(int argc, char** argv) {
     std::vector<std::string> definitions;
     app.add_option("-d,--define", definitions, "Preprocessor definitions");
 
+    std::string compiler = "gcc";
+    app.add_option("--compiler", compiler, "Compiler to emulate (gcc, msvc, clang)");
+
     bool quiet_flag = false;
     app.add_flag("-q,--quiet", quiet_flag, "Suppress non-error output");
 
@@ -351,6 +390,11 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    if (compiler != "gcc" && compiler != "msvc" && compiler != "clang") {
+        spdlog::error("Unknown compiler: {}. Supported compilers are: gcc, clang, msvc", compiler);
+        return 1;
+    }
+
     std::string result;
     {
         typedef boost::wave::cpplexer::lex_iterator<boost::wave::cpplexer::lex_token<>>
@@ -367,20 +411,22 @@ int main(int argc, char** argv) {
         for (const auto& inc_path : include_paths) {
             ctx.add_include_path(inc_path.c_str());
         }
-        ctx.add_macro_definition("true=1", true);
-        ctx.add_macro_definition("false=0", true);
+        predefine_macros(ctx, compiler, lang);
         for (const auto& def : definitions) {
             ctx.add_macro_definition(def, true);
         }
+        state.prohibited_macros = generate_prohibited_macros(compiler, lang);
 
         try {
             for (auto it = ctx.begin(); it != ctx.end(); ++it) {
             }
         } catch (const boost::wave::preprocess_exception& e) {
-            spdlog::error("Preprocessing error: {}", e.description());
+            spdlog::error("Preprocessing error: {} at {}:{}:{}", e.description(),
+                          state.get_correct_path(e.file_name()), e.line_no(), e.column_no());
             return 1;
         } catch (boost::wave::cpplexer::lexing_exception& e) {
-            spdlog::error("Lexing error: {}", e.description());
+            spdlog::error("Lexing error: {} at {}:{}:{}", e.description(),
+                          state.get_correct_path(e.file_name()), e.line_no(), e.column_no());
             return 1;
         }
         result = state.result.str();
