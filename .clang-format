@@ -5,4 +5,4 @@ Standard: Latest
 UseCRLF: false
 UseTab: Never
 BasedOnStyle: Google
-ColumnLimit: 200
+ColumnLimit: 100

@@ -1,10 +1,18 @@
 #include <spdlog/spdlog.h>
 
 #include <CLI/CLI.hpp>
-#include <boost/wave.hpp>
 #include <filesystem>
 #include <fstream>
 #include <system_error>
+
+inline std::string Expand(const std::string& content,
+                          const std::vector<std::filesystem::path>& include_paths,
+                          const std::vector<std::pair<std::string, std::string>>& definitions) {
+    if (include_paths.empty() && definitions.empty()) {
+        return content;
+    }
+    return content;
+}
 
 int main(int argc, char** argv) {
     CLI::App app;
@@ -74,6 +82,46 @@ int main(int argc, char** argv) {
     spdlog::info("Processing file: {}", path.string());
     std::string contents((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
     file.close();
+
+    std::vector<std::filesystem::path> include_paths;
+    for (const auto& inc_path_raw : include_paths_raw) {
+        const auto inc_path = std::filesystem::canonical(inc_path_raw, ec);
+        if (ec) {
+            spdlog::error("Failed to resolve include path '{}': {}", inc_path_raw, ec.message());
+            return 1;
+        }
+        if (!std::filesystem::is_directory(inc_path, ec)) {
+            spdlog::error("Include path is not a directory: {}", inc_path.string());
+            return 1;
+        }
+        include_paths.push_back(inc_path);
+    }
+
+    std::vector<std::pair<std::string, std::string>> def_pairs;
+    for (const auto& def : definitions) {
+        auto pos = def.find('=');
+        if (pos == std::string::npos) {
+            def_pairs.emplace_back(def, "1");
+        } else {
+            def_pairs.emplace_back(def.substr(0, pos), def.substr(pos + 1));
+        }
+    }
+
+    const auto result = Expand(contents, include_paths, def_pairs);
+
+    if (output_file_raw == "stdout") {
+        std::cout << result;
+    } else if (output_file_raw == "stderr") {
+        std::cerr << result;
+    } else {
+        std::ofstream output_file(output_file_raw);
+        if (!output_file.is_open()) {
+            spdlog::error("Failed to open output file: {}", output_file_raw);
+            return 1;
+        }
+        output_file << result;
+        output_file.close();
+    }
 
     return 0;
 }
