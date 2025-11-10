@@ -4,7 +4,6 @@
 #include <algorithm>
 #include <boost/wave.hpp>
 #include <boost/wave/cpplexer/cpp_lex_iterator.hpp>
-#include <boost/wave/token_ids.hpp>
 #include <cctype>
 #include <cstddef>
 #include <format>
@@ -93,6 +92,7 @@ struct hook_state : boost::noncopyable {
     bool found_warning = false;
     std::vector<std::pair<std::string, std::string>> correct_paths;
     bool remove_comments = false;
+    bool evaluate_if = false;
 
     using include_list_type = std::deque<std::pair<boost::filesystem::path, std::string>>;
     include_list_type include_paths;
@@ -304,8 +304,17 @@ class custom_hooks : public boost::wave::context_policies::default_preprocessing
     }
 
     template <typename ContextT, typename TokenT>
-    bool found_directive(ContextT const&, TokenT const&) {
+    bool found_directive(ContextT const&, TokenT const& token) {
         state.processing_directive = true;
+        if (!state.evaluate_if) {
+            const auto id = boost::wave::token_id(token);
+            if (id == boost::wave::T_PP_IF || id == boost::wave::T_PP_IFDEF ||
+                id == boost::wave::T_PP_IFNDEF || id == boost::wave::T_PP_ELSE ||
+                id == boost::wave::T_PP_ELIF || id == boost::wave::T_PP_ENDIF) {
+                state.result << token.get_value() << '\n';
+                return true;
+            }
+        }
         return false;
     }
 
@@ -403,6 +412,10 @@ int main(int argc, char** argv) {
 
     bool remove_comments = false;
     app.add_flag("--remove-comments", remove_comments, "Remove comments from output");
+
+    bool evaluate_if = false;
+    app.add_flag("--evaluate-if", evaluate_if,
+                 "Evaluate #if directives and include only the active branches");
 
     bool quiet_flag = false;
     app.add_flag("-q,--quiet", quiet_flag, "Suppress non-error output");
@@ -545,7 +558,8 @@ int main(int argc, char** argv) {
         result = state.result.str();
         if (state.found_warning) {
             spdlog::warn(
-                "One or more include files were not found. See comments in output for details.");
+                "One or more include files were not found. See comments in output for "
+                "details.");
         }
     }
 
