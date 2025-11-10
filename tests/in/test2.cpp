@@ -15,6 +15,7 @@ inline void test_function() { std::cout << "This should not appear." << std::end
 /*
 #include <should_not_be_included.hpp>
 */
+/* copyright (c) 1024 */
 
 int main() {
     test_function();

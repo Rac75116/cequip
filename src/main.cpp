@@ -4,6 +4,8 @@
 #include <algorithm>
 #include <boost/wave.hpp>
 #include <boost/wave/cpplexer/cpp_lex_iterator.hpp>
+#include <boost/wave/token_ids.hpp>
+#include <cctype>
 #include <cstddef>
 #include <format>
 #include <fstream>
@@ -90,6 +92,7 @@ struct hook_state : boost::noncopyable {
     bool processing_directive = false;
     bool found_warning = false;
     std::vector<std::pair<std::string, std::string>> correct_paths;
+    bool remove_comments = false;
 
     using include_list_type = std::deque<std::pair<boost::filesystem::path, std::string>>;
     include_list_type include_paths;
@@ -323,9 +326,22 @@ class custom_hooks : public boost::wave::context_policies::default_preprocessing
     template <typename ContextT, typename TokenT>
     TokenT const& generated_token(ContextT const&, TokenT const& token) {
         if (token.is_valid()) {
-            const auto value = token.get_value();
-            if (value == "\r\n" || value == "\r") {
+            const auto id = boost::wave::token_id(token);
+            if (id == boost::wave::T_NEWLINE) {
                 state.result << '\n';
+            } else if ((id == boost::wave::T_CCOMMENT || id == boost::wave::T_CPPCOMMENT) &&
+                       state.remove_comments) {
+                auto token_value = token.get_value();
+                auto value = std::string(token_value.begin(), token_value.end());
+                for (char& ch : value) ch = ::tolower(ch);
+                auto check_contains = [&](const std::string& substr) {
+                    return value.contains(substr);
+                };
+                if (check_contains("copyright") || check_contains("license") ||
+                    check_contains("(c)") || check_contains("all rights reserved") ||
+                    check_contains("©") || check_contains("®")) {
+                    state.result << token.get_value();
+                }
             } else {
                 state.result << token.get_value();
             }
@@ -384,6 +400,9 @@ int main(int argc, char** argv) {
 
     std::string compiler_version = "";
     app.add_option("--compiler-version", compiler_version, "Compiler version string to emulate");
+
+    bool remove_comments = false;
+    app.add_flag("--remove-comments", remove_comments, "Remove comments from output");
 
     bool quiet_flag = false;
     app.add_flag("-q,--quiet", quiet_flag, "Suppress non-error output");
@@ -502,6 +521,7 @@ int main(int argc, char** argv) {
         ctx.set_language(static_cast<boost::wave::language_support>(
             lang | boost::wave::support_option_preserve_comments |
             boost::wave::support_option_single_line));
+        state.remove_comments = remove_comments;
         for (const auto& inc_path : include_paths) {
             state.add_include_path(ctx, inc_path.c_str());
         }
