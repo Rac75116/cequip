@@ -1,11 +1,8 @@
-#include <spdlog/spdlog.h>
+#include "pch.hpp"
 
-#include <CLI/CLI.hpp>
-#include <algorithm>
-#include <boost/wave.hpp>
-#include <boost/wave/cpplexer/cpp_lex_iterator.hpp>
-#include <boost/wave/language_support.hpp>
-#include <filesystem>
+//
+
+#include <cstddef>
 #include <fstream>
 #include <random>
 #include <sstream>
@@ -14,61 +11,17 @@
 #include <system_error>
 #include <vector>
 
-struct temporary_directory {
-    std::filesystem::path path;
-    temporary_directory() {
-        std::error_code ec;
-        path = std::filesystem::temp_directory_path(ec);
-        if (ec) {
-            throw std::runtime_error("Failed to get system temporary directory: " + ec.message());
-        }
-        path /= std::filesystem::path("cequip_tmp_" + std::to_string(std::random_device{}()));
-        std::filesystem::create_directories(path, ec);
-        if (ec) {
-            throw std::runtime_error("Failed to create temporary directory '" + path.string() +
-                                     "': " + ec.message());
-        }
-    }
-    ~temporary_directory() {
-        std::error_code ec;
-        std::filesystem::remove_all(path, ec);
-        if (ec) {
-            spdlog::warn("Failed to remove temporary directory '{}': {}", path.string(),
-                         ec.message());
-        }
-    }
-};
-
-auto generate_prohibited_macros(const std::string& compiler, [[maybe_unused]] auto lang) {
-    std::vector<std::string_view> result;
-    if (compiler == "gcc" || compiler == "clang") {
-        result = {
-            "__DATE__",      "__TIME__",      "__TIMESTAMP__",     "__COUNTER__",
-            "__BASE_FILE__", "__FILE_NAME__", "__INCLUDE_LEVEL__",
-        };
-    }
-    if (compiler == "msvc") {
-        result = {
-            "__DATE__",
-            "__TIME__",
-            "__TIMESTAMP__",
-            "__COUNTER__",
-        };
-    }
-    std::sort(result.begin(), result.end());
-    return result;
-}
-
-void predefine_macros(auto& ctx, const std::string& compiler, auto lang) {
+void predefine_macros(auto& ctx, const std::string& compiler, auto lang,
+                      std::tuple<int, int, int> version) {
     ctx.add_macro_definition("true=1", true);
     ctx.add_macro_definition("false=0", true);
 
     const bool is_cpp = !!(lang & boost::wave::support_cpp);
 
     if (compiler == "gcc") {
-        const int gnu_major = 99;
-        const int gnu_minor = 0;
-        const int gnu_patch = 0;
+        const int gnu_major = std::get<0>(version);
+        const int gnu_minor = std::get<1>(version);
+        const int gnu_patch = std::get<2>(version);
 
         ctx.add_macro_definition("__GNUC__=" + std::to_string(gnu_major), true);
         ctx.add_macro_definition("__GNUC_MINOR__=" + std::to_string(gnu_minor), true);
@@ -89,9 +42,9 @@ void predefine_macros(auto& ctx, const std::string& compiler, auto lang) {
                                      std::to_string(gnu_patch) + "\"",
                                  true);
     } else if (compiler == "clang") {
-        const int clang_major = 99;
-        const int clang_minor = 0;
-        const int clang_patch = 0;
+        const int clang_major = std::get<0>(version);
+        const int clang_minor = std::get<1>(version);
+        const int clang_patch = std::get<2>(version);
 
         ctx.add_macro_definition("__clang__=1", true);
         ctx.add_macro_definition("__clang_major__=" + std::to_string(clang_major), true);
@@ -121,13 +74,13 @@ void predefine_macros(auto& ctx, const std::string& compiler, auto lang) {
                                      std::to_string(clang_patch) + "\"",
                                  true);
     } else if (compiler == "msvc") {
-        const int _MSC_VER_val = 9999;
-        const int _MSC_FULL_VER_val = 999900000;
-        const int _MSC_BUILD_val = 0;
+        const int _MSC_VER_val = std::get<0>(version) * 100 + std::get<1>(version);
+        const int _MSC_FULL_VER_val = std::get<0>(version) * 10000000 +
+                                      std::get<1>(version) * 100000 + std::get<2>(version) * 10;
 
         ctx.add_macro_definition("_MSC_VER=" + std::to_string(_MSC_VER_val), true);
         ctx.add_macro_definition("_MSC_FULL_VER=" + std::to_string(_MSC_FULL_VER_val), true);
-        ctx.add_macro_definition("_MSC_BUILD=" + std::to_string(_MSC_BUILD_val), true);
+        ctx.add_macro_definition("_MSC_BUILD=0", true);
         ctx.add_macro_definition("_MSC_EXTENSIONS=1", true);
         ctx.add_macro_definition("__STDC_HOSTED__=1", true);
 
@@ -145,25 +98,58 @@ void predefine_macros(auto& ctx, const std::string& compiler, auto lang) {
         }
 
         ctx.add_macro_definition(std::string("__VERSION__=\"MSVC ") +
-                                     std::to_string(_MSC_VER_val / 100) + "." +
-                                     std::to_string(_MSC_VER_val % 100) + "\"",
+                                     std::to_string(std::get<0>(version)) + "." +
+                                     std::to_string(std::get<1>(version)) + "\"",
                                  true);
     }
 };
 
 struct hook_state : boost::noncopyable {
     std::ostringstream result;
-    std::filesystem::path tmp_dir;
+    std::filesystem::path temp_dir_path;
+    std::filesystem::path dummy_include_path;
     std::uint64_t unique_id = 0;
     bool processing_directive = false;
-    bool generated_dummy_include_file = false;
-    std::vector<std::string_view> prohibited_macros;
-    std::map<std::string, std::string> correct_paths;
+    std::vector<std::pair<std::string, std::string>> correct_paths;
 
-    hook_state(const std::filesystem::path& tmp_dir) : tmp_dir(tmp_dir) {}
+    hook_state() {
+        std::error_code ec;
+        temp_dir_path = std::filesystem::temp_directory_path(ec);
+        if (ec) {
+            spdlog::error("Failed to get system temporary directory: {}", ec.message());
+            std::exit(1);
+        }
+        temp_dir_path /=
+            std::filesystem::path("cequip_tmp_" + std::to_string(std::random_device{}()));
+        std::filesystem::create_directories(temp_dir_path, ec);
+        if (ec) {
+            spdlog::error("Failed to create temporary directory '{}': {}", temp_dir_path.string(),
+                          ec.message());
+            std::exit(1);
+        }
+
+        dummy_include_path = temp_dir_path / "dummy_include";
+        std::ofstream temp_file(dummy_include_path, std::ios::trunc);
+        if (!temp_file.is_open()) {
+            spdlog::error("Failed to create dummy include file: {}", dummy_include_path.string());
+            std::exit(1);
+        }
+        temp_file.close();
+    }
+    ~hook_state() {
+        if (!temp_dir_path.empty()) {
+            std::error_code ec;
+            std::filesystem::remove_all(temp_dir_path, ec);
+            if (ec) {
+                spdlog::warn("Failed to remove temporary directory '{}': {}",
+                             temp_dir_path.string(), ec.message());
+            }
+        }
+    }
 
     std::string get_correct_path(const std::string& path) {
-        auto it = correct_paths.find(path);
+        auto it = std::find_if(correct_paths.begin(), correct_paths.end(),
+                               [&path](const auto& p) { return p.first == path; });
         if (it != correct_paths.end()) {
             return it->second;
         }
@@ -198,13 +184,8 @@ class custom_hooks : public boost::wave::context_policies::default_preprocessing
     }
 
     template <typename ContextT, typename TokenT, typename ContainerT>
-    bool expanding_object_like_macro(ContextT const&, TokenT const& macro, ContainerT const&,
+    bool expanding_object_like_macro(ContextT const&, TokenT const&, ContainerT const&,
                                      TokenT const&) {
-        const auto macro_name = macro.get_value();
-        if (std::binary_search(state.prohibited_macros.begin(), state.prohibited_macros.end(),
-                               std::string_view(macro_name.data(), macro_name.size()))) {
-            return true;
-        }
         return !state.processing_directive;
     }
 
@@ -212,64 +193,16 @@ class custom_hooks : public boost::wave::context_policies::default_preprocessing
     bool locate_include_file(ContextT& ctx, std::string& file_path, bool is_system,
                              char const* current_name, std::string& dir_path,
                              std::string& native_name) {
+        const auto raw_file_path = file_path;
         if (!ctx.find_include_file(file_path, dir_path, false, current_name)) {
             state.result << "#include " << (is_system ? '<' : '"') << file_path
                          << (is_system ? '>' : '"') << "\n";
-            auto dummy_include_path = state.tmp_dir / "dummy_include";
-            if (!state.generated_dummy_include_file) {
-                std::error_code ec;
-                std::ofstream temp_file(dummy_include_path, std::ios::trunc);
-                if (!temp_file.is_open()) {
-                    BOOST_WAVE_THROW_CTX(ctx, boost::wave::preprocess_exception, bad_include_file,
-                                         file_path.c_str(), ctx.get_main_pos());
-                    return false;
-                }
-                temp_file.close();
-                state.generated_dummy_include_file = true;
-            }
-            native_name = dummy_include_path.string();
+            native_name = state.dummy_include_path.string();
             return true;
         }
-
-        try {
-            auto src_path = std::filesystem::path(dir_path) / file_path;
-            std::error_code ec;
-            src_path = std::filesystem::canonical(src_path, ec);
-            if (ec) {
-                BOOST_WAVE_THROW_CTX(ctx, boost::wave::preprocess_exception, bad_include_file,
-                                     file_path.c_str(), ctx.get_main_pos());
-                return false;
-            }
-            std::ifstream in(src_path, std::ios::binary);
-            if (!in.is_open()) {
-                BOOST_WAVE_THROW_CTX(ctx, boost::wave::preprocess_exception, bad_include_file,
-                                     file_path.c_str(), ctx.get_main_pos());
-                return false;
-            }
-            std::string buf((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-            in.close();
-
-            if (!buf.empty() && buf.back() != '\n') {
-                buf.push_back('\n');
-            }
-
-            auto out_path = state.tmp_dir / ("include_" + std::to_string(state.unique_id++));
-            std::ofstream out(out_path, std::ios::binary | std::ios::trunc);
-            if (!out.is_open()) {
-                BOOST_WAVE_THROW_CTX(ctx, boost::wave::preprocess_exception, bad_include_file,
-                                     file_path.c_str(), ctx.get_main_pos());
-                return false;
-            }
-            out.write(buf.data(), static_cast<std::streamsize>(buf.size()));
-            out.close();
-            native_name = out_path.string();
-            state.correct_paths[native_name] = src_path.string();
-            return true;
-        } catch (...) {
-            BOOST_WAVE_THROW_CTX(ctx, boost::wave::preprocess_exception, bad_include_file,
-                                 file_path.c_str(), ctx.get_main_pos());
-            return false;
-        }
+        native_name = file_path;
+        state.correct_paths.emplace_back(raw_file_path, native_name);
+        return true;
     }
 
     template <typename ContextT>
@@ -406,6 +339,9 @@ int main(int argc, char** argv) {
     std::string compiler = "gcc";
     app.add_option("--compiler", compiler, "Compiler to emulate (gcc, msvc, clang)");
 
+    std::string compiler_version = "";
+    app.add_option("--compiler-version", compiler_version, "Compiler version string to emulate");
+
     bool quiet_flag = false;
     app.add_flag("-q,--quiet", quiet_flag, "Suppress non-error output");
 
@@ -494,6 +430,22 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    std::tuple<int, int, int> compiler_version_tuple;
+    if (compiler_version.empty()) {
+        compiler_version_tuple = {99, 0, 0};
+    } else {
+        char dot1 = 0;
+        char dot2 = 0;
+        std::istringstream version_stream(compiler_version);
+        version_stream >> std::get<0>(compiler_version_tuple) >> dot1 >>
+            std::get<1>(compiler_version_tuple) >> dot2 >> std::get<2>(compiler_version_tuple);
+        if (version_stream.fail() || dot1 != '.' || dot2 != '.') {
+            spdlog::error("Invalid compiler version format: {}. Expected format: major.minor.patch",
+                          compiler_version);
+            return 1;
+        }
+    }
+
     std::string result;
     {
         typedef boost::wave::cpplexer::lex_iterator<boost::wave::cpplexer::lex_token<>>
@@ -502,19 +454,19 @@ int main(int argc, char** argv) {
                                      boost::wave::iteration_context_policies::load_file_to_string,
                                      custom_hooks>
             context_type;
-        auto temp_directory_path = temporary_directory();
-        hook_state state(temp_directory_path.path);
+        hook_state state;
         context_type ctx(contents.begin(), contents.end(), path.c_str(), custom_hooks(state));
         ctx.set_language(static_cast<boost::wave::language_support>(
-            lang | boost::wave::support_option_preserve_comments));
+            lang | boost::wave::support_option_preserve_comments |
+            boost::wave::support_option_single_line |
+            boost::wave::support_option_emit_contnewlines));
         for (const auto& inc_path : include_paths) {
             ctx.add_include_path(inc_path.c_str());
         }
-        predefine_macros(ctx, compiler, lang);
+        predefine_macros(ctx, compiler, lang, compiler_version_tuple);
         for (const auto& def : definitions) {
             ctx.add_macro_definition(def, true);
         }
-        state.prohibited_macros = generate_prohibited_macros(compiler, lang);
 
         try {
             for (auto it = ctx.begin(); it != ctx.end(); ++it) {
@@ -543,6 +495,14 @@ int main(int argc, char** argv) {
         }
         output_file << result;
         output_file.close();
+        std::error_code ec;
+        const auto output_path = std::filesystem::canonical(output_file_raw, ec);
+        if (ec) {
+            spdlog::error("Failed to resolve output file path '{}': {}", output_file_raw,
+                          ec.message());
+            return 1;
+        }
+        spdlog::info("Output written to: {}", output_path.string());
     }
 
     spdlog::info("Preprocessing completed successfully.");
