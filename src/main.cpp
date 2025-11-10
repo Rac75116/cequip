@@ -1,127 +1,113 @@
-#include "pch.hpp"
+#include <spdlog/spdlog.h>
 
-//
-
+#include <CLI/CLI.hpp>
+#include <algorithm>
+#include <boost/wave.hpp>
+#include <boost/wave/cpplexer/cpp_lex_iterator.hpp>
 #include <cstddef>
+#include <format>
 #include <fstream>
 #include <random>
 #include <sstream>
-#include <stdexcept>
 #include <string>
-#include <system_error>
 #include <vector>
 
 void predefine_macros(auto& ctx, const std::string& compiler, auto lang,
                       std::tuple<int, int, int> version) {
-    ctx.add_macro_definition("true=1", true);
-    ctx.add_macro_definition("false=0", true);
+    auto define_macro = [&](const auto& value) { ctx.add_macro_definition(value, true); };
+
+    define_macro("true=1");
+    define_macro("false=0");
 
     const bool is_cpp = !!(lang & boost::wave::support_cpp);
 
+    const auto [major, minor, patch] = version;
+
     if (compiler == "gcc") {
-        const int gnu_major = std::get<0>(version);
-        const int gnu_minor = std::get<1>(version);
-        const int gnu_patch = std::get<2>(version);
-
-        ctx.add_macro_definition("__GNUC__=" + std::to_string(gnu_major), true);
-        ctx.add_macro_definition("__GNUC_MINOR__=" + std::to_string(gnu_minor), true);
-        ctx.add_macro_definition("__GNUC_PATCHLEVEL__=" + std::to_string(gnu_patch), true);
+        define_macro(std::format("__GNUC__={}", major));
+        define_macro(std::format("__GNUC_MINOR__={}", minor));
+        define_macro(std::format("__GNUC_PATCHLEVEL__={}", patch));
+        define_macro("__STRICT_ANSI__=1");
+        define_macro(std::format("__VERSION__=\"GCC {}.{}.{}\"", major, minor, patch));
 
         if (is_cpp) {
-            ctx.add_macro_definition("__GNUG__=" + std::to_string(gnu_major), true);
-            ctx.add_macro_definition("__GXX_WEAK__=1", true);
-            ctx.add_macro_definition("__EXCEPTIONS=1", true);
-            ctx.add_macro_definition("__GXX_RTTI=1", true);
-            ctx.add_macro_definition("__DEPRECATED=1", true);
+            define_macro(std::format("__GNUG__={}", major));
+            define_macro("__GXX_WEAK__=1");
+            define_macro("__EXCEPTIONS=1");
+            define_macro("__GXX_RTTI=1");
+            define_macro("__DEPRECATED=1");
         }
 
-        ctx.add_macro_definition("__STRICT_ANSI__=1", true);
-
-        ctx.add_macro_definition(std::string("__VERSION__=\"GCC ") + std::to_string(gnu_major) +
-                                     "." + std::to_string(gnu_minor) + "." +
-                                     std::to_string(gnu_patch) + "\"",
-                                 true);
     } else if (compiler == "clang") {
-        const int clang_major = std::get<0>(version);
-        const int clang_minor = std::get<1>(version);
-        const int clang_patch = std::get<2>(version);
-
-        ctx.add_macro_definition("__clang__=1", true);
-        ctx.add_macro_definition("__clang_major__=" + std::to_string(clang_major), true);
-        ctx.add_macro_definition("__clang_minor__=" + std::to_string(clang_minor), true);
-        ctx.add_macro_definition("__clang_patchlevel__=" + std::to_string(clang_patch), true);
-        ctx.add_macro_definition(
-            std::string("__clang_version__=\"Clang ") + std::to_string(clang_major) + "." +
-                std::to_string(clang_minor) + "." + std::to_string(clang_patch) + "\"",
-            true);
-        ctx.add_macro_definition("__clang_literal_encoding__=\"UTF-8\"", true);
-        ctx.add_macro_definition("__clang_wide_literal_encoding__=\"UTF-32\"", true);
-        ctx.add_macro_definition("__GNUC__=" + std::to_string(clang_major), true);
-        ctx.add_macro_definition("__GNUC_MINOR__=" + std::to_string(clang_minor), true);
-        ctx.add_macro_definition("__GNUC_PATCHLEVEL__=" + std::to_string(clang_patch), true);
+        define_macro(std::format("__clang__=1"));
+        define_macro(std::format("__clang_major__={}", major));
+        define_macro(std::format("__clang_minor__={}", minor));
+        define_macro(std::format("__clang_patchlevel__={}", patch));
+        define_macro(std::format("__clang_version__=\"Clang {}.{}.{}\"", major, minor, patch));
+        define_macro("__clang_literal_encoding__=\"UTF-8\"");
+        define_macro("__clang_wide_literal_encoding__=\"UTF-32\"");
+        define_macro(std::format("__GNUC__={}", major));
+        define_macro(std::format("__GNUC_MINOR__={}", minor));
+        define_macro(std::format("__GNUC_PATCHLEVEL__={}", patch));
 
         if (is_cpp) {
-            ctx.add_macro_definition("__GNUG__=" + std::to_string(clang_major), true);
-            ctx.add_macro_definition("__DEPRECATED=1", true);
-            ctx.add_macro_definition("__EXCEPTIONS=1", true);
-            ctx.add_macro_definition("__GXX_RTTI=1", true);
+            define_macro(std::format("__GNUG__={}", major));
+            define_macro("__DEPRECATED=1");
+            define_macro("__EXCEPTIONS=1");
+            define_macro("__GXX_RTTI=1");
         }
 
-        ctx.add_macro_definition("__STRICT_ANSI__=1", true);
-
-        ctx.add_macro_definition(std::string("__VERSION__=\"Clang ") + std::to_string(clang_major) +
-                                     "." + std::to_string(clang_minor) + "." +
-                                     std::to_string(clang_patch) + "\"",
-                                 true);
     } else if (compiler == "msvc") {
-        const int _MSC_VER_val = std::get<0>(version) * 100 + std::get<1>(version);
-        const int _MSC_FULL_VER_val = std::get<0>(version) * 10000000 +
-                                      std::get<1>(version) * 100000 + std::get<2>(version) * 10;
+        const int _MSC_VER_val = major * 100 + minor;
+        const int _MSC_FULL_VER_val = _MSC_VER_val * 10000 + patch * 10;
 
-        ctx.add_macro_definition("_MSC_VER=" + std::to_string(_MSC_VER_val), true);
-        ctx.add_macro_definition("_MSC_FULL_VER=" + std::to_string(_MSC_FULL_VER_val), true);
-        ctx.add_macro_definition("_MSC_BUILD=0", true);
-        ctx.add_macro_definition("_MSC_EXTENSIONS=1", true);
-        ctx.add_macro_definition("__STDC_HOSTED__=1", true);
-
+        define_macro(std::format("_MSC_VER={}", _MSC_VER_val));
+        define_macro(std::format("_MSC_FULL_VER={}", _MSC_FULL_VER_val));
+        define_macro(std::format("__VERSION__=\"MSVC {}.{}\"", major, minor));
+        define_macro("_MSC_BUILD=0");
+        define_macro("_MSC_EXTENSIONS=1");
+        define_macro("__STDC_HOSTED__=1");
         if (is_cpp) {
-            ctx.add_macro_definition("_CPPUNWIND=1", true);
-            ctx.add_macro_definition("_CPPRTTI=1", true);
+            define_macro("_CPPUNWIND=1");
+            define_macro("_CPPRTTI=1");
 
             if (lang & boost::wave::support_cpp2a) {
-                ctx.add_macro_definition("_MSVC_LANG=202302L", true);
+                define_macro("_MSVC_LANG=202302L");
             } else if (lang & boost::wave::support_cpp20) {
-                ctx.add_macro_definition("_MSVC_LANG=202002L", true);
+                define_macro("_MSVC_LANG=202002L");
             } else if (lang & boost::wave::support_cpp17) {
-                ctx.add_macro_definition("_MSVC_LANG=201703L", true);
+                define_macro("_MSVC_LANG=201703L");
             }
         }
-
-        ctx.add_macro_definition(std::string("__VERSION__=\"MSVC ") +
-                                     std::to_string(std::get<0>(version)) + "." +
-                                     std::to_string(std::get<1>(version)) + "\"",
-                                 true);
     }
 };
 
 struct hook_state : boost::noncopyable {
     std::ostringstream result;
-    std::filesystem::path temp_dir_path;
-    std::filesystem::path dummy_include_path;
+    boost::filesystem::path temp_dir_path;
+    boost::filesystem::path dummy_include_path;
     std::uint64_t unique_id = 0;
     bool processing_directive = false;
+    bool found_warning = false;
     std::vector<std::pair<std::string, std::string>> correct_paths;
 
+    using include_list_type = std::deque<std::pair<boost::filesystem::path, std::string>>;
+    include_list_type include_paths;
+
+    std::vector<std::string_view> known_headers = {
+#include "known_headers.inc"
+    };
+
     hook_state() {
-        std::error_code ec;
-        temp_dir_path = std::filesystem::temp_directory_path(ec);
+        boost::system::error_code ec;
+        temp_dir_path = boost::filesystem::temp_directory_path(ec);
         if (ec) {
             spdlog::error("Failed to get system temporary directory: {}", ec.message());
             std::exit(1);
         }
         temp_dir_path /=
-            std::filesystem::path("cequip_tmp_" + std::to_string(std::random_device{}()));
-        std::filesystem::create_directories(temp_dir_path, ec);
+            boost::filesystem::path("cequip_tmp_" + std::to_string(std::random_device{}()));
+        boost::filesystem::create_directories(temp_dir_path, ec);
         if (ec) {
             spdlog::error("Failed to create temporary directory '{}': {}", temp_dir_path.string(),
                           ec.message());
@@ -129,17 +115,19 @@ struct hook_state : boost::noncopyable {
         }
 
         dummy_include_path = temp_dir_path / "dummy_include";
-        std::ofstream temp_file(dummy_include_path, std::ios::trunc);
+        std::ofstream temp_file(dummy_include_path.string(), std::ios::trunc);
         if (!temp_file.is_open()) {
             spdlog::error("Failed to create dummy include file: {}", dummy_include_path.string());
             std::exit(1);
         }
         temp_file.close();
+
+        std::sort(known_headers.begin(), known_headers.end());
     }
     ~hook_state() {
         if (!temp_dir_path.empty()) {
-            std::error_code ec;
-            std::filesystem::remove_all(temp_dir_path, ec);
+            boost::system::error_code ec;
+            boost::filesystem::remove_all(temp_dir_path, ec);
             if (ec) {
                 spdlog::warn("Failed to remove temporary directory '{}': {}",
                              temp_dir_path.string(), ec.message());
@@ -154,6 +142,48 @@ struct hook_state : boost::noncopyable {
             return it->second;
         }
         return path;
+    }
+
+    void add_include_path(auto& ctx, const std::string& path) {
+        auto new_path = boost::wave::util::complete_path(path, ctx.get_current_directory());
+        if (!boost::filesystem::is_directory(new_path)) {
+            spdlog::error("Include path is not a directory: {}", new_path.string());
+            std::exit(1);
+        }
+        include_paths.emplace_back(new_path, path);
+    }
+
+    bool find_include_file(std::string& s, std::string& dir, char const* current_file) const {
+        auto it = include_paths.begin();
+        auto include_paths_end = include_paths.end();
+        if (0 != current_file) {
+            boost::filesystem::path file_path(current_file);
+            for (; it != include_paths_end; ++it) {
+                boost::filesystem::path currpath((*it).first.string());
+                if (std::equal(currpath.begin(), currpath.end(), file_path.begin())) {
+                    ++it;
+                    break;
+                }
+            }
+        }
+        for (; it != include_paths_end; ++it) {
+            boost::filesystem::path currpath(s);
+            if (!currpath.has_root_directory()) {
+                currpath = (*it).first.string();
+                currpath /= s;
+            }
+            if (boost::filesystem::is_regular_file(currpath)) {
+                boost::filesystem::path dirpath(s);
+                if (!dirpath.has_root_directory()) {
+                    dirpath = (*it).second;
+                    dirpath /= s;
+                }
+                dir = dirpath.string();
+                s = boost::wave::util::normalize(currpath).string();
+                return true;
+            }
+        }
+        return false;
     }
 };
 
@@ -191,17 +221,30 @@ class custom_hooks : public boost::wave::context_policies::default_preprocessing
 
     template <typename ContextT>
     bool locate_include_file(ContextT& ctx, std::string& file_path, bool is_system,
-                             char const* current_name, std::string& dir_path,
+                             char const* current_file, std::string& dir_path,
                              std::string& native_name) {
         const auto raw_file_path = file_path;
-        if (!ctx.find_include_file(file_path, dir_path, false, current_name)) {
-            state.result << "#include " << (is_system ? '<' : '"') << file_path
-                         << (is_system ? '>' : '"') << "\n";
-            native_name = state.dummy_include_path.string();
+        if (0 == current_file && ctx.find_include_file(file_path, dir_path, false, current_file) &&
+            boost::filesystem::is_regular_file(file_path)) {
+            native_name = file_path;
+            state.correct_paths.emplace_back(raw_file_path, native_name);
             return true;
         }
-        native_name = file_path;
-        state.correct_paths.emplace_back(raw_file_path, native_name);
+        if (state.find_include_file(file_path, dir_path, current_file)) {
+            native_name = file_path;
+            state.correct_paths.emplace_back(raw_file_path, native_name);
+            return true;
+        }
+        bool should_warn = !std::binary_search(state.known_headers.begin(),
+                                               state.known_headers.end(), raw_file_path);
+        state.result << "#include " << (is_system ? '<' : '"') << raw_file_path
+                     << (is_system ? '>' : '"');
+        if (should_warn) {
+            state.found_warning = true;
+            state.result << " /* Warning: include file not found */";
+        }
+        state.result << '\n';
+        native_name = state.dummy_include_path.string();
         return true;
     }
 
@@ -366,13 +409,13 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    std::error_code ec;
-    auto path = std::filesystem::canonical(input_file_raw, ec);
+    boost::system::error_code ec;
+    auto path = boost::filesystem::canonical(input_file_raw, ec);
     if (ec) {
         spdlog::error("Failed to resolve path '{}': {}", input_file_raw, ec.message());
         return 1;
     }
-    const auto file_size = std::filesystem::file_size(path, ec);
+    const auto file_size = boost::filesystem::file_size(path, ec);
     if (ec) {
         spdlog::error("Failed to get file size for '{}': {}", path.string(), ec.message());
         return 1;
@@ -384,7 +427,7 @@ int main(int argc, char** argv) {
         spdlog::error("File is too large (>1GB): {}", path.string());
         return 1;
     }
-    std::ifstream file(path);
+    std::ifstream file(path.string());
     if (!file.is_open()) {
         spdlog::error("Failed to open file: {}", path.string());
         return 1;
@@ -393,14 +436,14 @@ int main(int argc, char** argv) {
     std::string contents((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
     file.close();
 
-    std::vector<std::filesystem::path> include_paths;
+    std::vector<boost::filesystem::path> include_paths;
     for (const auto& inc_path_raw : include_paths_raw) {
-        const auto inc_path = std::filesystem::canonical(inc_path_raw, ec);
+        const auto inc_path = boost::filesystem::canonical(inc_path_raw, ec);
         if (ec) {
             spdlog::error("Failed to resolve include path '{}': {}", inc_path_raw, ec.message());
             return 1;
         }
-        if (!std::filesystem::is_directory(inc_path, ec)) {
+        if (!boost::filesystem::is_directory(inc_path, ec)) {
             spdlog::error("Include path is not a directory: {}", inc_path.string());
             return 1;
         }
@@ -458,10 +501,9 @@ int main(int argc, char** argv) {
         context_type ctx(contents.begin(), contents.end(), path.c_str(), custom_hooks(state));
         ctx.set_language(static_cast<boost::wave::language_support>(
             lang | boost::wave::support_option_preserve_comments |
-            boost::wave::support_option_single_line |
-            boost::wave::support_option_emit_contnewlines));
+            boost::wave::support_option_single_line));
         for (const auto& inc_path : include_paths) {
-            ctx.add_include_path(inc_path.c_str());
+            state.add_include_path(ctx, inc_path.c_str());
         }
         predefine_macros(ctx, compiler, lang, compiler_version_tuple);
         for (const auto& def : definitions) {
@@ -481,6 +523,10 @@ int main(int argc, char** argv) {
             return 1;
         }
         result = state.result.str();
+        if (state.found_warning) {
+            spdlog::warn(
+                "One or more include files were not found. See comments in output for details.");
+        }
     }
 
     if (output_file_raw == "stdout") {
@@ -495,8 +541,8 @@ int main(int argc, char** argv) {
         }
         output_file << result;
         output_file.close();
-        std::error_code ec;
-        const auto output_path = std::filesystem::canonical(output_file_raw, ec);
+        boost::system::error_code ec;
+        const auto output_path = boost::filesystem::canonical(output_file_raw, ec);
         if (ec) {
             spdlog::error("Failed to resolve output file path '{}': {}", output_file_raw,
                           ec.message());

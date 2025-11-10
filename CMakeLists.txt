@@ -35,7 +35,10 @@ find_package(spdlog CONFIG REQUIRED)
 target_link_libraries(cequip PRIVATE spdlog::spdlog)
 
 target_precompile_headers(cequip PRIVATE
-    "src/pch.hpp"
+    <spdlog/spdlog.h>
+    <CLI/CLI.hpp>
+    <boost/wave.hpp>
+    <boost/wave/cpplexer/cpp_lex_iterator.hpp>
 )
 
 target_compile_definitions(cequip PRIVATE PROJECT_VERSION="${PROJECT_VERSION}")
