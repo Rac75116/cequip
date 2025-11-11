@@ -2,6 +2,7 @@
 
 #include <CLI/CLI.hpp>
 #include <algorithm>
+#include <boost/unordered/unordered_flat_map.hpp>
 #include <boost/wave.hpp>
 #include <boost/wave/cpplexer/cpp_lex_iterator.hpp>
 #include <cctype>
@@ -20,7 +21,7 @@ void predefine_macros(auto& ctx, const std::string& compiler, auto lang,
     define_macro("true=1");
     define_macro("false=0");
 
-    const bool is_cpp = !!(lang & boost::wave::support_cpp);
+    const bool is_cpp = lang != boost::wave::support_c99;
 
     const auto [major, minor, patch] = version;
 
@@ -88,15 +89,23 @@ struct hook_state : boost::noncopyable {
     boost::filesystem::path temp_dir_path;
     boost::filesystem::path dummy_include_path;
     std::uint64_t unique_id = 0;
+    bool is_cpp = true;
     bool processing_directive = false;
     bool found_warning = false;
-    std::vector<std::pair<std::string, std::string>> correct_paths;
+    boost::unordered_flat_map<std::string, std::string> correct_paths;
     bool remove_comments = false;
-    bool evaluate_if = false;
+    bool evaluate_directives = true;
 
     using include_list_type = std::deque<std::pair<boost::filesystem::path, std::string>>;
     include_list_type include_paths;
 
+    std::vector<std::string_view> std_c_headers = {
+#include "std_c_headers.inc"
+    };
+    std::vector<std::string_view> std_cpp_headers = {
+#include "std_c_headers.inc"
+#include "std_cpp_headers.inc"
+    };
     std::vector<std::string_view> known_headers = {
 #include "known_headers.inc"
     };
@@ -125,6 +134,8 @@ struct hook_state : boost::noncopyable {
         }
         temp_file.close();
 
+        std::sort(std_c_headers.begin(), std_c_headers.end());
+        std::sort(std_cpp_headers.begin(), std_cpp_headers.end());
         std::sort(known_headers.begin(), known_headers.end());
     }
     ~hook_state() {
@@ -139,8 +150,7 @@ struct hook_state : boost::noncopyable {
     }
 
     std::string get_correct_path(const std::string& path) {
-        auto it = std::find_if(correct_paths.begin(), correct_paths.end(),
-                               [&path](const auto& p) { return p.first == path; });
+        auto it = correct_paths.find(path);
         if (it != correct_paths.end()) {
             return it->second;
         }
@@ -226,16 +236,20 @@ class custom_hooks : public boost::wave::context_policies::default_preprocessing
     bool locate_include_file(ContextT& ctx, std::string& file_path, bool is_system,
                              char const* current_file, std::string& dir_path,
                              std::string& native_name) {
-        const auto raw_file_path = file_path;
-        if (0 == current_file && ctx.find_include_file(file_path, dir_path, false, current_file) &&
-            boost::filesystem::is_regular_file(file_path)) {
-            native_name = file_path;
-            state.correct_paths.emplace_back(raw_file_path, native_name);
-            return true;
+        if (is_system) {
+            const auto& std_headers = state.is_cpp ? state.std_cpp_headers : state.std_c_headers;
+            if (std::binary_search(std_headers.begin(), std_headers.end(), file_path)) {
+                state.result << "#include <" << file_path << ">\n";
+                native_name = state.dummy_include_path.string();
+                return true;
+            }
         }
-        if (state.find_include_file(file_path, dir_path, current_file)) {
+        const auto raw_file_path = file_path;
+        if ((0 == current_file && ctx.find_include_file(file_path, dir_path, false, current_file) &&
+             boost::filesystem::is_regular_file(file_path)) ||
+            state.find_include_file(file_path, dir_path, current_file)) {
             native_name = file_path;
-            state.correct_paths.emplace_back(raw_file_path, native_name);
+            state.correct_paths.emplace(raw_file_path, native_name);
             return true;
         }
         bool should_warn = !std::binary_search(state.known_headers.begin(),
@@ -253,8 +267,13 @@ class custom_hooks : public boost::wave::context_policies::default_preprocessing
 
     template <typename ContextT>
     bool found_include_directive(ContextT const&, std::string const&, bool) {
-        state.processing_directive = true;
+        state.processing_directive = false;
         return false;
+    }
+
+    template <typename ContextT>
+    void detected_include_guard(ContextT const&, std::string const&, std::string const&) {
+        state.processing_directive = false;
     }
 
     template <typename ContextT, typename TokenT>
@@ -269,7 +288,7 @@ class custom_hooks : public boost::wave::context_policies::default_preprocessing
         log_container(values);
         state.result << '\n';
         state.processing_directive = false;
-        return true;
+        return false;
     }
 
     template <typename ContextT, typename TokenT, typename ParametersT, typename DefinitionT>
@@ -304,17 +323,8 @@ class custom_hooks : public boost::wave::context_policies::default_preprocessing
     }
 
     template <typename ContextT, typename TokenT>
-    bool found_directive(ContextT const&, TokenT const& token) {
+    bool found_directive(ContextT const&, TokenT const&) {
         state.processing_directive = true;
-        if (!state.evaluate_if) {
-            const auto id = boost::wave::token_id(token);
-            if (id == boost::wave::T_PP_IF || id == boost::wave::T_PP_IFDEF ||
-                id == boost::wave::T_PP_IFNDEF || id == boost::wave::T_PP_ELSE ||
-                id == boost::wave::T_PP_ELIF || id == boost::wave::T_PP_ENDIF) {
-                state.result << token.get_value() << '\n';
-                return true;
-            }
-        }
         return false;
     }
 
@@ -396,7 +406,7 @@ int main(int argc, char** argv) {
     app.add_option("file", input_file_raw, "Input file to process");
 
     std::string output_file_raw = "stdout";
-    app.add_option("-o,--output", output_file_raw, "Output file (default: stdout)");
+    app.add_option("-o,--output", output_file_raw, "Output file")->default_val("stdout");
 
     std::vector<std::string> include_paths_raw;
     app.add_option("-i,--include", include_paths_raw, "Include paths for preprocessing");
@@ -404,25 +414,26 @@ int main(int argc, char** argv) {
     std::vector<std::string> definitions;
     app.add_option("-d,--define", definitions, "Preprocessor definitions");
 
-    std::string compiler = "gcc";
-    app.add_option("--compiler", compiler, "Compiler to emulate (gcc, msvc, clang)");
-
-    std::string compiler_version = "";
-    app.add_option("--compiler-version", compiler_version, "Compiler version string to emulate");
+    bool evaluate_directives = false;
+    // app.add_flag("-e,--evaluate-directives", evaluate_directives,
+    //              "Evaluate preprocessor directives");
 
     bool remove_comments = false;
     app.add_flag("--remove-comments", remove_comments, "Remove comments from output");
 
-    bool evaluate_if = false;
-    app.add_flag("--evaluate-if", evaluate_if,
-                 "Evaluate #if directives and include only the active branches");
-
     bool quiet_flag = false;
     app.add_flag("-q,--quiet", quiet_flag, "Suppress non-error output");
 
-    std::string lang_str = "cpp23";
-    app.add_option("--lang", lang_str,
-                   "Language standard (c99, cpp98, cpp11, cpp17, cpp20, cpp23)");
+    std::string compiler;
+    app.add_option("--compiler", compiler, "Compiler to emulate (gcc, msvc, clang)")
+        ->default_val("gcc");
+
+    std::string compiler_version = "";
+    app.add_option("--compiler-version", compiler_version, "Compiler version string to emulate");
+
+    std::string lang_str;
+    app.add_option("--lang", lang_str, "Language standard (c99, cpp98, cpp11, cpp17, cpp20, cpp23)")
+        ->default_val("cpp23");
 
     CLI11_PARSE(app, argc, argv);
 
@@ -533,8 +544,11 @@ int main(int argc, char** argv) {
         context_type ctx(contents.begin(), contents.end(), path.c_str(), custom_hooks(state));
         ctx.set_language(static_cast<boost::wave::language_support>(
             lang | boost::wave::support_option_preserve_comments |
-            boost::wave::support_option_single_line));
+            boost::wave::support_option_single_line |
+            boost::wave::support_option_include_guard_detection));
+        state.is_cpp = (lang != boost::wave::support_c99);
         state.remove_comments = remove_comments;
+        state.evaluate_directives = evaluate_directives;
         for (const auto& inc_path : include_paths) {
             state.add_include_path(ctx, inc_path.c_str());
         }
