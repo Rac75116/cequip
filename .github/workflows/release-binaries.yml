@@ -1,0 +1,48 @@
+name: Build Release Binaries
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            configure: ./scripts/configure.sh
+            build: ./scripts/build.sh
+            artifact: build/cequip
+          - os: macos-latest
+            configure: ./scripts/configure.sh
+            build: ./scripts/build.sh
+            artifact: build/cequip
+          - os: windows-latest
+            configure: ./scripts/configure.bat
+            build: ./scripts/build.bat
+            artifact: build/Release/cequip.exe
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up vcpkg
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgGitCommitId: ""
+
+      - name: Configure
+        run: ${{ matrix.configure }}
+        shell: bash
+
+      - name: Build
+        run: ${{ matrix.build }}
+        shell: bash
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cequip-${{ runner.os }}
+          path: ${{ matrix.artifact }}

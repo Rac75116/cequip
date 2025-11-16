@@ -7,82 +7,11 @@
 #include <boost/wave/cpplexer/cpp_lex_iterator.hpp>
 #include <cctype>
 #include <cstddef>
-#include <format>
 #include <fstream>
 #include <random>
 #include <sstream>
 #include <string>
 #include <vector>
-
-void predefine_macros(auto& ctx, const std::string& compiler, auto lang,
-                      std::tuple<int, int, int> version) {
-    auto define_macro = [&](const auto& value) { ctx.add_macro_definition(value, true); };
-
-    define_macro("true=1");
-    define_macro("false=0");
-
-    const bool is_cpp = lang != boost::wave::support_c99;
-
-    const auto [major, minor, patch] = version;
-
-    if (compiler == "gcc") {
-        define_macro(std::format("__GNUC__={}", major));
-        define_macro(std::format("__GNUC_MINOR__={}", minor));
-        define_macro(std::format("__GNUC_PATCHLEVEL__={}", patch));
-        define_macro("__STRICT_ANSI__=1");
-        define_macro(std::format("__VERSION__=\"GCC {}.{}.{}\"", major, minor, patch));
-
-        if (is_cpp) {
-            define_macro(std::format("__GNUG__={}", major));
-            define_macro("__GXX_WEAK__=1");
-            define_macro("__EXCEPTIONS=1");
-            define_macro("__GXX_RTTI=1");
-            define_macro("__DEPRECATED=1");
-        }
-
-    } else if (compiler == "clang") {
-        define_macro(std::format("__clang__=1"));
-        define_macro(std::format("__clang_major__={}", major));
-        define_macro(std::format("__clang_minor__={}", minor));
-        define_macro(std::format("__clang_patchlevel__={}", patch));
-        define_macro(std::format("__clang_version__=\"Clang {}.{}.{}\"", major, minor, patch));
-        define_macro("__clang_literal_encoding__=\"UTF-8\"");
-        define_macro("__clang_wide_literal_encoding__=\"UTF-32\"");
-        define_macro(std::format("__GNUC__={}", major));
-        define_macro(std::format("__GNUC_MINOR__={}", minor));
-        define_macro(std::format("__GNUC_PATCHLEVEL__={}", patch));
-
-        if (is_cpp) {
-            define_macro(std::format("__GNUG__={}", major));
-            define_macro("__DEPRECATED=1");
-            define_macro("__EXCEPTIONS=1");
-            define_macro("__GXX_RTTI=1");
-        }
-
-    } else if (compiler == "msvc") {
-        const int _MSC_VER_val = major * 100 + minor;
-        const int _MSC_FULL_VER_val = _MSC_VER_val * 10000 + patch * 10;
-
-        define_macro(std::format("_MSC_VER={}", _MSC_VER_val));
-        define_macro(std::format("_MSC_FULL_VER={}", _MSC_FULL_VER_val));
-        define_macro(std::format("__VERSION__=\"MSVC {}.{}\"", major, minor));
-        define_macro("_MSC_BUILD=0");
-        define_macro("_MSC_EXTENSIONS=1");
-        define_macro("__STDC_HOSTED__=1");
-        if (is_cpp) {
-            define_macro("_CPPUNWIND=1");
-            define_macro("_CPPRTTI=1");
-
-            if (lang & boost::wave::support_cpp2a) {
-                define_macro("_MSVC_LANG=202302L");
-            } else if (lang & boost::wave::support_cpp20) {
-                define_macro("_MSVC_LANG=202002L");
-            } else if (lang & boost::wave::support_cpp17) {
-                define_macro("_MSVC_LANG=201703L");
-            }
-        }
-    }
-};
 
 struct hook_state : boost::noncopyable {
     std::ostringstream result;
@@ -94,7 +23,6 @@ struct hook_state : boost::noncopyable {
     bool found_warning = false;
     boost::unordered_flat_map<std::string, std::string> correct_paths;
     bool remove_comments = false;
-    bool evaluate_directives = true;
 
     using include_list_type = std::deque<std::pair<boost::filesystem::path, std::string>>;
     include_list_type include_paths;
@@ -414,22 +342,11 @@ int main(int argc, char** argv) {
     std::vector<std::string> definitions;
     app.add_option("-d,--define", definitions, "Preprocessor definitions");
 
-    bool evaluate_directives = false;
-    // app.add_flag("-e,--evaluate-directives", evaluate_directives,
-    //              "Evaluate preprocessor directives");
-
     bool remove_comments = false;
     app.add_flag("--remove-comments", remove_comments, "Remove comments from output");
 
     bool quiet_flag = false;
     app.add_flag("-q,--quiet", quiet_flag, "Suppress non-error output");
-
-    std::string compiler;
-    app.add_option("--compiler", compiler, "Compiler to emulate (gcc, msvc, clang)")
-        ->default_val("gcc");
-
-    std::string compiler_version = "";
-    app.add_option("--compiler-version", compiler_version, "Compiler version string to emulate");
 
     std::string lang_str;
     app.add_option("--lang", lang_str, "Language standard (c99, cpp98, cpp11, cpp17, cpp20, cpp23)")
@@ -511,27 +428,6 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    if (compiler != "gcc" && compiler != "msvc" && compiler != "clang") {
-        spdlog::error("Unknown compiler: {}. Supported compilers are: gcc, clang, msvc", compiler);
-        return 1;
-    }
-
-    std::tuple<int, int, int> compiler_version_tuple;
-    if (compiler_version.empty()) {
-        compiler_version_tuple = {99, 0, 0};
-    } else {
-        char dot1 = 0;
-        char dot2 = 0;
-        std::istringstream version_stream(compiler_version);
-        version_stream >> std::get<0>(compiler_version_tuple) >> dot1 >>
-            std::get<1>(compiler_version_tuple) >> dot2 >> std::get<2>(compiler_version_tuple);
-        if (version_stream.fail() || dot1 != '.' || dot2 != '.') {
-            spdlog::error("Invalid compiler version format: {}. Expected format: major.minor.patch",
-                          compiler_version);
-            return 1;
-        }
-    }
-
     std::string result;
     {
         typedef boost::wave::cpplexer::lex_iterator<boost::wave::cpplexer::lex_token<>>
@@ -548,11 +444,12 @@ int main(int argc, char** argv) {
             boost::wave::support_option_include_guard_detection));
         state.is_cpp = (lang != boost::wave::support_c99);
         state.remove_comments = remove_comments;
-        state.evaluate_directives = evaluate_directives;
         for (const auto& inc_path : include_paths) {
             state.add_include_path(ctx, inc_path.c_str());
         }
-        predefine_macros(ctx, compiler, lang, compiler_version_tuple);
+        ctx.add_macro_definition("__CEQUIP__", true);
+        ctx.add_macro_definition("true=1", true);
+        ctx.add_macro_definition("false=0", true);
         for (const auto& def : definitions) {
             ctx.add_macro_definition(def, true);
         }
