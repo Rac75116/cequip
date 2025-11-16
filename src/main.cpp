@@ -437,7 +437,8 @@ int main(int argc, char** argv) {
                                      custom_hooks>
             context_type;
         hook_state state;
-        context_type ctx(contents.begin(), contents.end(), path.c_str(), custom_hooks(state));
+        const auto path_str = path.string();
+        context_type ctx(contents.begin(), contents.end(), path_str.c_str(), custom_hooks(state));
         ctx.set_language(static_cast<boost::wave::language_support>(
             lang | boost::wave::support_option_preserve_comments |
             boost::wave::support_option_single_line |
@@ -445,7 +446,7 @@ int main(int argc, char** argv) {
         state.is_cpp = (lang != boost::wave::support_c99);
         state.remove_comments = remove_comments;
         for (const auto& inc_path : include_paths) {
-            state.add_include_path(ctx, inc_path.c_str());
+            state.add_include_path(ctx, inc_path.string());
         }
         ctx.add_macro_definition("__CEQUIP__", true);
         ctx.add_macro_definition("true=1", true);
@@ -486,11 +487,11 @@ int main(int argc, char** argv) {
         }
         output_file << result;
         output_file.close();
-        boost::system::error_code ec;
-        const auto output_path = boost::filesystem::canonical(output_file_raw, ec);
-        if (ec) {
+        boost::system::error_code ec_out;
+        const auto output_path = boost::filesystem::canonical(output_file_raw, ec_out);
+        if (ec_out) {
             spdlog::error("Failed to resolve output file path '{}': {}", output_file_raw,
-                          ec.message());
+                          ec_out.message());
             return 1;
         }
         spdlog::info("Output written to: {}", output_path.string());
