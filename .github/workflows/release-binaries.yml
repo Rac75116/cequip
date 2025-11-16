@@ -33,7 +33,6 @@ jobs:
         with:
           vcpkgGitCommitId: "365f6444ab40ee87c73c947b475b3a267b3cb77c"
           vcpkgJsonGlob: "**/vcpkg.json"
-          appendedCacheKey: ${{ runner.os }}-cequip
           doNotCache: false
 
       - name: Configure
