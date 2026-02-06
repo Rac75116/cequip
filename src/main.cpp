@@ -407,10 +407,6 @@ int main(int argc, char** argv) {
     if (file_size == 0) {
         spdlog::warn("File is empty: {}", path.string());
     }
-    if (file_size > 1024 * 1024 * 1024) {
-        spdlog::error("File is too large (>1GB): {}", path.string());
-        return 1;
-    }
     std::ifstream file(path.string());
     if (!file.is_open()) {
         spdlog::error("Failed to open file: {}", path.string());
