@@ -1,6 +1,8 @@
 @echo off
 setlocal
 
-if "%VCPKG_ROOT%"=="" set VCPKG_ROOT=C:\vcpkg
+uv run conan profile detect --force >NUL 2>NUL
 
-cmake -B build -S . -DCMAKE_TOOLCHAIN_FILE=%VCPKG_ROOT%\scripts\buildsystems\vcpkg.cmake
+uv run conan install . -of build -s build_type=Release -s compiler.runtime=static -s compiler.runtime_type=Release -o *:shared=False -b missing
+
+cmake -B build -S . -DCMAKE_BUILD_TYPE=Release

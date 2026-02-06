@@ -1,16 +1,40 @@
+#include <spdlog/common.h>
 #include <spdlog/spdlog.h>
 
 #include <CLI/CLI.hpp>
 #include <algorithm>
+#include <boost/core/noncopyable.hpp>
+#include <boost/filesystem/operations.hpp>
+#include <boost/filesystem/path.hpp>
+#include <boost/system/detail/error_code.hpp>
 #include <boost/unordered/unordered_flat_map.hpp>
+#include <boost/unordered/unordered_flat_map_fwd.hpp>
 #include <boost/wave.hpp>
+#include <boost/wave/cpp_context.hpp>
+#include <boost/wave/cpp_exceptions.hpp>
+#include <boost/wave/cpp_iteration_context.hpp>
 #include <boost/wave/cpplexer/cpp_lex_iterator.hpp>
+#include <boost/wave/cpplexer/cpp_lex_token.hpp>
+#include <boost/wave/cpplexer/cpplexer_exceptions.hpp>
+#include <boost/wave/language_support.hpp>
+#include <boost/wave/preprocessing_hooks.hpp>
+#include <boost/wave/token_ids.hpp>
+#include <boost/wave/util/filesystem_compatibility.hpp>
 #include <cctype>
 #include <cstddef>
+#include <cstdint>
+#include <cstdlib>
+#include <deque>
 #include <fstream>
+#include <ios>
+#include <iostream>
+#include <iterator>
+#include <ostream>
 #include <random>
 #include <sstream>
 #include <string>
+#include <string_view>
+#include <utility>
 #include <vector>
 
 struct hook_state : boost::noncopyable {

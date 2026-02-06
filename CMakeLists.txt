@@ -5,6 +5,14 @@ set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+if(UNIX AND NOT APPLE)
+    set(CMAKE_SKIP_BUILD_RPATH TRUE)
+    set(CMAKE_BUILD_WITH_INSTALL_RPATH FALSE)
+    set(CMAKE_SKIP_INSTALL_RPATH TRUE)
+    set(CMAKE_INSTALL_RPATH "")
+    set(CMAKE_INSTALL_RPATH_USE_LINK_PATH FALSE)
+endif()
+
 if(WIN32)
     message(STATUS "Building for Windows")
 elseif(APPLE)
@@ -17,15 +25,22 @@ add_executable(cequip
     src/main.cpp
 )
 
-find_package(Boost REQUIRED COMPONENTS
+find_package(Boost CONFIG QUIET COMPONENTS
     wave
+    filesystem
+    thread
 )
-target_include_directories(cequip PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
-    ${Boost_INCLUDE_DIRS}
-)
+if(NOT Boost_FOUND)
+    find_package(Boost REQUIRED COMPONENTS
+        wave
+        filesystem
+        thread
+    )
+endif()
 target_link_libraries(cequip PRIVATE
     Boost::wave
+    Boost::filesystem
+    Boost::thread
 )
 
 find_package(CLI11 CONFIG REQUIRED)
@@ -50,10 +65,12 @@ elseif(APPLE)
     target_link_libraries(cequip PRIVATE pthread)
 elseif(UNIX)
     target_link_libraries(cequip PRIVATE pthread dl)
+    target_link_options(cequip PRIVATE -static-libstdc++ -static-libgcc)
 endif()
 
 if(MSVC)
     target_compile_options(cequip PRIVATE /W4)
+    set_property(TARGET cequip PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 else()
     target_compile_options(cequip PRIVATE -O3 -Wall -Wextra -pedantic)
 endif()
