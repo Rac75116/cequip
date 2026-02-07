@@ -10,6 +10,7 @@ class CequipConan(ConanFile):
 
     default_options = {
         "*:shared": False,
+        "boost/*:without_cobalt": True,
     }
 
     requires = (

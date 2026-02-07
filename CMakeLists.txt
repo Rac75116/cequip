@@ -28,10 +28,12 @@ add_executable(cequip
 find_package(Boost CONFIG REQUIRED COMPONENTS
     wave
     filesystem
+    thread
 )
 target_link_libraries(cequip PRIVATE
     Boost::wave
     Boost::filesystem
+    Boost::thread
 )
 
 find_package(CLI11 CONFIG REQUIRED)
