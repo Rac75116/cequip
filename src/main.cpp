@@ -30,10 +30,8 @@
 #include <iostream>
 #include <iterator>
 #include <ostream>
-#include <random>
 #include <sstream>
 #include <string>
-#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -51,17 +49,6 @@ struct hook_state : boost::noncopyable {
     using include_list_type = std::deque<std::pair<boost::filesystem::path, std::string>>;
     include_list_type include_paths;
 
-    std::vector<std::string_view> std_c_headers = {
-#include "std_c_headers.inc"
-    };
-    std::vector<std::string_view> std_cpp_headers = {
-#include "std_c_headers.inc"
-#include "std_cpp_headers.inc"
-    };
-    std::vector<std::string_view> known_headers = {
-#include "known_headers.inc"
-    };
-
     hook_state() {
         boost::system::error_code ec;
         temp_dir_path = boost::filesystem::temp_directory_path(ec);
@@ -69,13 +56,14 @@ struct hook_state : boost::noncopyable {
             spdlog::error("Failed to get system temporary directory: {}", ec.message());
             std::exit(1);
         }
-        temp_dir_path /=
-            boost::filesystem::path("cequip_tmp_" + std::to_string(std::random_device{}()));
-        boost::filesystem::create_directories(temp_dir_path, ec);
-        if (ec) {
-            spdlog::error("Failed to create temporary directory '{}': {}", temp_dir_path.string(),
-                          ec.message());
-            std::exit(1);
+        temp_dir_path /= "cequip";
+        if (!boost::filesystem::exists(temp_dir_path)) {
+            boost::filesystem::create_directories(temp_dir_path, ec);
+            if (ec) {
+                spdlog::error("Failed to create temporary directory '{}': {}",
+                              temp_dir_path.string(), ec.message());
+                std::exit(1);
+            }
         }
 
         dummy_include_path = temp_dir_path / "dummy_include";
@@ -85,10 +73,6 @@ struct hook_state : boost::noncopyable {
             std::exit(1);
         }
         temp_file.close();
-
-        std::sort(std_c_headers.begin(), std_c_headers.end());
-        std::sort(std_cpp_headers.begin(), std_cpp_headers.end());
-        std::sort(known_headers.begin(), known_headers.end());
     }
     ~hook_state() {
         if (!temp_dir_path.empty()) {
@@ -188,14 +172,6 @@ class custom_hooks : public boost::wave::context_policies::default_preprocessing
     bool locate_include_file(ContextT& ctx, std::string& file_path, bool is_system,
                              char const* current_file, std::string& dir_path,
                              std::string& native_name) {
-        if (is_system) {
-            const auto& std_headers = state.is_cpp ? state.std_cpp_headers : state.std_c_headers;
-            if (std::binary_search(std_headers.begin(), std_headers.end(), file_path)) {
-                state.result << "#include <" << file_path << ">\n";
-                native_name = state.dummy_include_path.string();
-                return true;
-            }
-        }
         const auto raw_file_path = file_path;
         if ((0 == current_file && ctx.find_include_file(file_path, dir_path, false, current_file) &&
              boost::filesystem::is_regular_file(file_path)) ||
@@ -204,14 +180,8 @@ class custom_hooks : public boost::wave::context_policies::default_preprocessing
             state.correct_paths.emplace(raw_file_path, native_name);
             return true;
         }
-        bool should_warn = !std::binary_search(state.known_headers.begin(),
-                                               state.known_headers.end(), raw_file_path);
         state.result << "#include " << (is_system ? '<' : '"') << raw_file_path
                      << (is_system ? '>' : '"');
-        if (should_warn) {
-            state.found_warning = true;
-            state.result << " /* Warning: include file not found */";
-        }
         state.result << '\n';
         native_name = state.dummy_include_path.string();
         return true;
