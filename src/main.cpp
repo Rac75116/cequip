@@ -1,25 +1,12 @@
-#include <spdlog/common.h>
 #include <spdlog/spdlog.h>
 
 #include <CLI/CLI.hpp>
 #include <algorithm>
-#include <boost/core/noncopyable.hpp>
-#include <boost/filesystem/operations.hpp>
-#include <boost/filesystem/path.hpp>
-#include <boost/system/detail/error_code.hpp>
+#include <boost/filesystem.hpp>
 #include <boost/unordered/unordered_flat_map.hpp>
-#include <boost/unordered/unordered_flat_map_fwd.hpp>
+#include <boost/unordered/unordered_flat_set.hpp>
 #include <boost/wave.hpp>
-#include <boost/wave/cpp_context.hpp>
-#include <boost/wave/cpp_exceptions.hpp>
-#include <boost/wave/cpp_iteration_context.hpp>
 #include <boost/wave/cpplexer/cpp_lex_iterator.hpp>
-#include <boost/wave/cpplexer/cpp_lex_token.hpp>
-#include <boost/wave/cpplexer/cpplexer_exceptions.hpp>
-#include <boost/wave/language_support.hpp>
-#include <boost/wave/preprocessing_hooks.hpp>
-#include <boost/wave/token_ids.hpp>
-#include <boost/wave/util/filesystem_compatibility.hpp>
 #include <cctype>
 #include <cstddef>
 #include <cstdint>
@@ -42,9 +29,9 @@ struct hook_state : boost::noncopyable {
     std::uint64_t unique_id = 0;
     bool is_cpp = true;
     bool processing_directive = false;
-    bool found_warning = false;
     boost::unordered_flat_map<std::string, std::string> correct_paths;
     bool remove_comments = false;
+    boost::unordered_flat_set<std::string> included_system_headers;
 
     using include_list_type = std::deque<std::pair<boost::filesystem::path, std::string>>;
     include_list_type include_paths;
@@ -180,6 +167,14 @@ class custom_hooks : public boost::wave::context_policies::default_preprocessing
             state.correct_paths.emplace(raw_file_path, native_name);
             return true;
         }
+        if (is_system) {
+            if (state.included_system_headers.find(raw_file_path) !=
+                state.included_system_headers.end()) {
+                native_name = state.dummy_include_path.string();
+                return true;
+            }
+            state.included_system_headers.insert(raw_file_path);
+        }
         state.result << "#include " << (is_system ? '<' : '"') << raw_file_path
                      << (is_system ? '>' : '"');
         state.result << '\n';
@@ -275,12 +270,9 @@ class custom_hooks : public boost::wave::context_policies::default_preprocessing
                 auto token_value = token.get_value();
                 auto value = std::string(token_value.begin(), token_value.end());
                 for (char& ch : value) ch = ::tolower(ch);
-                auto check_contains = [&](const std::string& substr) {
-                    return value.contains(substr);
-                };
-                if (check_contains("copyright") || check_contains("license") ||
-                    check_contains("(c)") || check_contains("all rights reserved") ||
-                    check_contains("©") || check_contains("®")) {
+                if (value.contains("copyright") || value.contains("license") ||
+                    value.contains("(c)") || value.contains("all rights reserved") ||
+                    value.contains("©") || value.contains("®")) {
                     state.result << token.get_value();
                 }
             } else {
@@ -458,11 +450,6 @@ int main(int argc, char** argv) {
             return 1;
         }
         result = state.result.str();
-        if (state.found_warning) {
-            spdlog::warn(
-                "One or more include files were not found. See comments in output for "
-                "details.");
-        }
     }
 
     if (output_file_raw == "stdout") {

@@ -1,5 +1,7 @@
-#include "test1_include1.hpp"
+#include "test1_include1.hpp"  // IWYU pragma: keep
 #include NEXT_INCLUDE
+#include <iostream>
+
 #include "test1_include3.hpp"
 
 int main() {

@@ -52,6 +52,9 @@ target_link_libraries(cequip PRIVATE spdlog::spdlog)
 target_precompile_headers(cequip PRIVATE
     <spdlog/spdlog.h>
     <CLI/CLI.hpp>
+    <boost/filesystem.hpp>
+    <boost/unordered/unordered_flat_map.hpp>
+    <boost/unordered/unordered_flat_set.hpp>
     <boost/wave.hpp>
     <boost/wave/cpplexer/cpp_lex_iterator.hpp>
 )
@@ -72,7 +75,7 @@ if(MSVC)
     target_compile_options(cequip PRIVATE /W4)
     set_property(TARGET cequip PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 else()
-    target_compile_options(cequip PRIVATE -O3 -Wall -Wextra -pedantic)
+    target_compile_options(cequip PRIVATE -O3 -Wall -Wextra -pedantic -Wno-pch-date-time)
 endif()
 
 install(TARGETS cequip DESTINATION bin)

@@ -6,4 +6,4 @@ CompileFlags:
 
 Diagnostics:
   UnusedIncludes: Strict
-  MissingIncludes: Strict
+  MissingIncludes: None
