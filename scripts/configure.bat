@@ -12,6 +12,5 @@ uv run conan install .  ^
     -b missing
 
 cmake -B build -S . -DCMAKE_BUILD_TYPE=Release ^
-	-DCMAKE_TOOLCHAIN_FILE="build\Release\generators\conan_toolchain.cmake" ^
 	-DCMAKE_PREFIX_PATH="build\Release\generators" ^
 	-DCMAKE_FIND_PACKAGE_PREFER_CONFIG=ON

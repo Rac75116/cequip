@@ -28,12 +28,21 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up vcpkg
-        uses: lukka/run-vcpkg@v11
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v3
         with:
-          vcpkgGitCommitId: "365f6444ab40ee87c73c947b475b3a267b3cb77c"
-          vcpkgJsonGlob: "**/vcpkg.json"
-          doNotCache: false
+          python-version: "3.14"
+
+      - name: Cache Conan/uv
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.conan2
+            ~/.cache/uv
+            C:\\Users\\runneradmin\\.conan2
+            C:\\Users\\runneradmin\\AppData\\Local\\uv\\cache
+          key: conan-uv-${{ runner.os }}
+          restore-keys: conan-uv-${{ runner.os }}-
 
       - name: Configure
         run: ${{ matrix.configure }}

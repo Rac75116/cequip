@@ -25,22 +25,13 @@ add_executable(cequip
     src/main.cpp
 )
 
-find_package(Boost CONFIG QUIET COMPONENTS
+find_package(Boost CONFIG REQUIRED COMPONENTS
     wave
     filesystem
-    thread
 )
-if(NOT Boost_FOUND)
-    find_package(Boost REQUIRED COMPONENTS
-        wave
-        filesystem
-        thread
-    )
-endif()
 target_link_libraries(cequip PRIVATE
     Boost::wave
     Boost::filesystem
-    Boost::thread
 )
 
 find_package(CLI11 CONFIG REQUIRED)
