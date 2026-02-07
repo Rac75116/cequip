@@ -3,6 +3,15 @@ setlocal
 
 uv run conan profile detect --force >NUL 2>NUL
 
-uv run conan install . -of build -s build_type=Release -s compiler.runtime=static -s compiler.runtime_type=Release -o *:shared=False -b missing
+uv run conan install .  ^
+    -of build ^
+    -s build_type=Release ^
+    -s compiler.runtime=static ^
+    -s compiler.runtime_type=Release ^
+    -o *:shared=False ^
+    -b missing
 
-cmake -B build -S . -DCMAKE_BUILD_TYPE=Release
+cmake -B build -S . -DCMAKE_BUILD_TYPE=Release ^
+	-DCMAKE_TOOLCHAIN_FILE="build\Release\generators\conan_toolchain.cmake" ^
+	-DCMAKE_PREFIX_PATH="build\Release\generators" ^
+	-DCMAKE_FIND_PACKAGE_PREFER_CONFIG=ON
