@@ -15,17 +15,14 @@ jobs:
             configure: ./scripts/configure.sh
             build: ./scripts/build.sh
             artifact: build/cequip
-            shell: bash
           - os: macos-latest
             configure: ./scripts/configure.sh
             build: ./scripts/build.sh
             artifact: build/cequip
-            shell: bash
           - os: windows-latest
             configure: ./scripts/configure.bat
             build: ./scripts/build.bat
             artifact: build/Release/cequip.exe
-            shell: cmd
 
     steps:
       - name: Checkout
@@ -49,11 +46,23 @@ jobs:
 
       - name: Configure
         run: ${{ matrix.configure }}
-        shell: ${{ matrix.shell }}
+        shell: bash
+        if: ${{ matrix.os != 'windows-latest' }}
+
+      - name: Configure (Windows)
+        run: ${{ matrix.configure }}
+        shell: cmd
+        if: ${{ matrix.os == 'windows-latest' }}
 
       - name: Build
         run: ${{ matrix.build }}
-        shell: ${{ matrix.shell }}
+        shell: bash
+        if: ${{ matrix.os != 'windows-latest' }}
+
+      - name: Build (Windows)
+        run: ${{ matrix.build }}
+        shell: cmd
+        if: ${{ matrix.os == 'windows-latest' }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
