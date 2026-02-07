@@ -12,7 +12,7 @@ uv run conan install .  ^
     -o *:shared=False ^
     -b missing
 
-set GEN_PATH=%CD%\build\Release\generators
+set GEN_PATH=%CD%\build\generators
 
 cmake -B build -S . -DCMAKE_BUILD_TYPE=Release ^
 	-DCMAKE_PREFIX_PATH="%GEN_PATH%" ^
