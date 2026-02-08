@@ -1,6 +1,6 @@
 # cequip
 
-## Build (Linux/macOS)
+## Build
 
 Prerequisites:
 
@@ -11,5 +11,10 @@ Prerequisites:
 
 Commands:
 
+Linux/MacOS
 - `./scripts/configure.sh`
 - `./scripts/build.sh`
+
+Windows
+- `.\scripts\configure.bat`
+- `.\scripts\build.bat`

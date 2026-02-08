@@ -15,11 +15,23 @@ jobs:
             configure: ./scripts/configure.sh
             build: ./scripts/build.sh
             artifact: build/cequip
+          - os: ubuntu-24.04-arm
+            configure: ./scripts/configure.sh
+            build: ./scripts/build.sh
+            artifact: build/cequip
+          - os: macos-15-intel
+            configure: ./scripts/configure.sh
+            build: ./scripts/build.sh
+            artifact: build/cequip
           - os: macos-latest
             configure: ./scripts/configure.sh
             build: ./scripts/build.sh
             artifact: build/cequip
           - os: windows-latest
+            configure: ./scripts/configure.bat
+            build: ./scripts/build.bat
+            artifact: build/Release/cequip.exe
+          - os: windows-11-arm
             configure: ./scripts/configure.bat
             build: ./scripts/build.bat
             artifact: build/Release/cequip.exe
@@ -45,22 +57,22 @@ jobs:
       - name: Configure
         run: ${{ matrix.configure }}
         shell: bash
-        if: ${{ matrix.os != 'windows-latest' }}
+        if: ${{ !startsWith(matrix.os, 'windows') }}
 
       - name: Configure (Windows)
         run: ${{ matrix.configure }}
         shell: cmd
-        if: ${{ matrix.os == 'windows-latest' }}
+        if: ${{ startsWith(matrix.os, 'windows') }}
 
       - name: Build
         run: ${{ matrix.build }}
         shell: bash
-        if: ${{ matrix.os != 'windows-latest' }}
+        if: ${{ !startsWith(matrix.os, 'windows') }}
 
       - name: Build (Windows)
         run: ${{ matrix.build }}
         shell: cmd
-        if: ${{ matrix.os == 'windows-latest' }}
+        if: ${{ startsWith(matrix.os, 'windows') }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
