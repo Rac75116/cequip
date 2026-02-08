@@ -4,12 +4,13 @@
 
 ### Prerequisites
 
-- CMake (3.20+)
-- Ninja
-- clang++
 - uv
+- CMake
+- Ninja
+- clang++ (Linux/MacOS)
+- msvc (Windows)
 
-### Commands
+### Build
 
 Linux/MacOS:
 - `./scripts/configure.sh`
@@ -18,3 +19,11 @@ Linux/MacOS:
 Windows:
 - `.\scripts\configure.bat`
 - `.\scripts\build.bat`
+
+### Install
+
+Linux/MacOS:
+- `./scripts/install.sh`
+
+Windows:
+- `.\scripts\install.bat`

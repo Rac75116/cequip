@@ -4,6 +4,6 @@
 
 int main() {
     dump_hello();
-    std::cout << __FILE__ << ' ' << __DATE__ << ' ' << __TIME__ << ' ' << __LINE__ << std::endl;
+    std::cout << __FILE__ << ' ' << __DATE__ << ' ' << __TIME__ << ' ' << __LINE__ << ' ' << __INCLUDE_LEVEL__ << std::endl;
     return 0;
 }
