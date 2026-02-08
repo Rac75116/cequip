@@ -10,8 +10,7 @@ Diagnostics:
 
 ---
 If:
-  PathMatch: .*
-  PathExclude: tests/in/.*
+  PathMatch: tests/in/.*
 
 Diagnostics:
   Suppress: "*"
