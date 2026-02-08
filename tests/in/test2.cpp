@@ -19,5 +19,7 @@ inline void test_function() { std::cout << "This should not appear." << std::end
 
 int main() {
     test_function();
+    int a = 12, b = 23;
+    std::cout << a+/**/+b;
     return 0;
 }

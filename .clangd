@@ -7,3 +7,11 @@ CompileFlags:
 Diagnostics:
   UnusedIncludes: Strict
   MissingIncludes: None
+
+---
+If:
+  PathMatch: .*
+  PathExclude: tests/in/.*
+
+Diagnostics:
+  Suppress: "*"
