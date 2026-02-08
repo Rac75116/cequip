@@ -51,8 +51,8 @@ jobs:
             ~/.cache/uv
             C:\\Users\\runneradmin\\.conan2
             C:\\Users\\runneradmin\\AppData\\Local\\uv\\cache
-          key: conan-uv-${{ runner.os }}
-          restore-keys: conan-uv-${{ runner.os }}-
+          key: conan-uv-${{ matrix.os }}
+          restore-keys: conan-uv-${{ matrix.os }}-
 
       - name: Configure
         run: ${{ matrix.configure }}
