@@ -321,8 +321,7 @@ run_config parse_cli(int argc, char** argv) {
     try {
         app.parse(argc, argv);
     } catch (const CLI::ParseError& e) {
-        app.exit(e);
-        std::exit(app.exit_code());
+        std::exit(app.exit(e));
     }
 
     return config;
