@@ -1,76 +1,27 @@
 #include <spdlog/spdlog.h>
 
 #include <CLI/CLI.hpp>
-#include <algorithm>
 #include <boost/filesystem.hpp>
+#include <boost/filesystem/operations.hpp>
 #include <boost/unordered/unordered_flat_map.hpp>
 #include <boost/unordered/unordered_flat_set.hpp>
 #include <boost/wave.hpp>
 #include <boost/wave/cpplexer/cpp_lex_iterator.hpp>
-#include <cctype>
-#include <cstddef>
-#include <cstdint>
-#include <cstdlib>
-#include <deque>
-#include <fstream>
-#include <ios>
-#include <iostream>
-#include <iterator>
-#include <ostream>
-#include <sstream>
-#include <string>
-#include <utility>
-#include <vector>
+
+enum class eol_type { as_is, native, lf, crlf };
 
 struct hook_state : boost::noncopyable {
     std::ostringstream result;
-    boost::filesystem::path temp_dir_path;
-    boost::filesystem::path dummy_include_path;
     std::uint64_t unique_id = 0;
     bool is_cpp = true;
     bool processing_directive = false;
     boost::unordered_flat_map<std::string, std::string> correct_paths;
     bool remove_comments = false;
+    eol_type eol = eol_type::as_is;
     boost::unordered_flat_set<std::string> included_system_headers;
 
     using include_list_type = std::deque<std::pair<boost::filesystem::path, std::string>>;
     include_list_type include_paths;
-
-    hook_state() {
-        boost::system::error_code ec;
-        temp_dir_path = boost::filesystem::temp_directory_path(ec);
-        if (ec) {
-            spdlog::error("Failed to get system temporary directory: {}", ec.message());
-            std::exit(1);
-        }
-        temp_dir_path /= "cequip";
-        if (!boost::filesystem::exists(temp_dir_path)) {
-            boost::filesystem::create_directories(temp_dir_path, ec);
-            if (ec) {
-                spdlog::error("Failed to create temporary directory '{}': {}",
-                              temp_dir_path.string(), ec.message());
-                std::exit(1);
-            }
-        }
-
-        dummy_include_path = temp_dir_path / "dummy_include";
-        std::ofstream temp_file(dummy_include_path.string(), std::ios::trunc);
-        if (!temp_file.is_open()) {
-            spdlog::error("Failed to create dummy include file: {}", dummy_include_path.string());
-            std::exit(1);
-        }
-        temp_file.close();
-    }
-    ~hook_state() {
-        if (!temp_dir_path.empty()) {
-            boost::system::error_code ec;
-            boost::filesystem::remove_all(temp_dir_path, ec);
-            if (ec) {
-                spdlog::warn("Failed to remove temporary directory '{}': {}",
-                             temp_dir_path.string(), ec.message());
-            }
-        }
-    }
 
     std::string get_correct_path(const std::string& path) {
         auto it = correct_paths.find(path);
@@ -168,17 +119,18 @@ class custom_hooks : public boost::wave::context_policies::default_preprocessing
             return true;
         }
         if (is_system) {
-            if (state.included_system_headers.find(raw_file_path) !=
-                state.included_system_headers.end()) {
-                native_name = state.dummy_include_path.string();
-                return true;
+            bool inserted = state.included_system_headers.insert(raw_file_path).second;
+            if (inserted) {
+                state.result << "#include <" << raw_file_path << ">\n";
             }
-            state.included_system_headers.insert(raw_file_path);
+        } else {
+            state.result << "#include \"" << raw_file_path << "\"\n";
         }
-        state.result << "#include " << (is_system ? '<' : '"') << raw_file_path
-                     << (is_system ? '>' : '"');
-        state.result << '\n';
-        native_name = state.dummy_include_path.string();
+#if defined(_WIN32)
+        native_name = "NUL";
+#else
+        native_name = "/dev/null";
+#endif
         return true;
     }
 
@@ -264,7 +216,19 @@ class custom_hooks : public boost::wave::context_policies::default_preprocessing
         if (token.is_valid()) {
             const auto id = boost::wave::token_id(token);
             if (id == boost::wave::T_NEWLINE) {
-                state.result << '\n';
+                if (state.eol == eol_type::as_is) {
+                    state.result << token.get_value();
+                } else if (state.eol == eol_type::native) {
+#if defined(_WIN32)
+                    state.result << "\r\n";
+#else
+                    state.result << "\n";
+#endif
+                } else if (state.eol == eol_type::lf) {
+                    state.result << "\n";
+                } else if (state.eol == eol_type::crlf) {
+                    state.result << "\r\n";
+                }
             } else if ((id == boost::wave::T_CCOMMENT || id == boost::wave::T_CPPCOMMENT) &&
                        state.remove_comments) {
                 auto token_value = token.get_value();
@@ -331,11 +295,17 @@ int main(int argc, char** argv) {
     bool remove_comments = false;
     app.add_flag("--remove-comments", remove_comments, "Remove comments from output");
 
+    std::string end_of_line;
+    app.add_option("--end-of-line", end_of_line, "End-of-line sequence")
+        ->check(CLI::IsMember({"as-is", "native", "lf", "crlf"}))
+        ->default_val("as-is");
+
     bool quiet_flag = false;
     app.add_flag("-q,--quiet", quiet_flag, "Suppress non-error output");
 
     std::string lang_str;
-    app.add_option("--lang", lang_str, "Language standard (c99, cpp98, cpp11, cpp17, cpp20, cpp23)")
+    app.add_option("--lang", lang_str, "Language standard")
+        ->check(CLI::IsMember({"c99", "cpp98", "cpp11", "cpp17", "cpp20", "cpp23"}))
         ->default_val("cpp23");
 
     CLI11_PARSE(app, argc, argv);
@@ -406,8 +376,20 @@ int main(int argc, char** argv) {
     } else if (lang_str == "cpp23") {
         lang = boost::wave::language_support::support_cpp2a;
     } else {
-        spdlog::error("Unknown language standard: {}", lang_str);
-        return 1;
+        std::unreachable();
+    }
+
+    eol_type eol_setting;
+    if (end_of_line == "as-is") {
+        eol_setting = eol_type::as_is;
+    } else if (end_of_line == "native") {
+        eol_setting = eol_type::native;
+    } else if (end_of_line == "lf") {
+        eol_setting = eol_type::lf;
+    } else if (end_of_line == "crlf") {
+        eol_setting = eol_type::crlf;
+    } else {
+        std::unreachable();
     }
 
     std::string result;
@@ -427,6 +409,7 @@ int main(int argc, char** argv) {
             boost::wave::support_option_include_guard_detection));
         state.is_cpp = (lang != boost::wave::support_c99);
         state.remove_comments = remove_comments;
+        state.eol = eol_setting;
         for (const auto& inc_path : include_paths) {
             state.add_include_path(ctx, inc_path.string());
         }

@@ -2,19 +2,19 @@
 
 ## Build
 
-Prerequisites:
+### Prerequisites
 
 - CMake (3.20+)
 - Ninja
 - clang++
 - uv
 
-Commands:
+### Commands
 
-Linux/MacOS
+Linux/MacOS:
 - `./scripts/configure.sh`
 - `./scripts/build.sh`
 
-Windows
+Windows:
 - `.\scripts\configure.bat`
 - `.\scripts\build.bat`

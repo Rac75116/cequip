@@ -31,4 +31,5 @@ uv run conan install . \
 CC=clang CXX=clang++ cmake -B "build" -G "Ninja" -S . \
     -DCMAKE_BUILD_TYPE="Release" \
     -DCMAKE_PREFIX_PATH="build/Release/generators" \
-    -DCMAKE_FIND_PACKAGE_PREFER_CONFIG=ON
+    -DCMAKE_FIND_PACKAGE_PREFER_CONFIG=ON \
+    -DCMAKE_EXPORT_COMPILE_COMMANDS=ON

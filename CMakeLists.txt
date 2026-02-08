@@ -66,7 +66,7 @@ endif()
 
 if(MSVC)
     target_compile_options(cequip PRIVATE /W4)
-    set_property(TARGET cequip PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    set_property(TARGET cequip PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded")
 else()
     target_compile_options(cequip PRIVATE -O3 -Wall -Wextra -pedantic -Wno-pch-date-time)
 endif()
