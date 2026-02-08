@@ -7,8 +7,31 @@
 #include <boost/unordered/unordered_flat_set.hpp>
 #include <boost/wave.hpp>
 #include <boost/wave/cpplexer/cpp_lex_iterator.hpp>
+#include <cstdint>
+#include <deque>
+#include <fstream>
+#include <iostream>
+#include <iterator>
+#include <sstream>
+#include <string>
+#include <utility>
+#include <vector>
 
 enum class eol_type { as_is, native, lf, crlf };
+
+struct run_config {
+    bool version_flag = false;
+    bool quiet_flag = false;
+    bool remove_comments = false;
+    std::string input_file_raw;
+    std::string output_file_raw = "stdout";
+    std::vector<std::string> include_paths_raw;
+    std::vector<std::string> definitions;
+    std::string lang_str = "cpp23";
+    std::string eol_str = "as-is";
+    eol_type eol = eol_type::as_is;
+    boost::wave::language_support lang = boost::wave::language_support::support_cpp2a;
+};
 
 struct hook_state : boost::noncopyable {
     std::ostringstream result;
@@ -274,190 +297,242 @@ class custom_hooks : public boost::wave::context_policies::default_preprocessing
     }
 };
 
-int main(int argc, char** argv) {
+run_config parse_cli(int argc, char** argv) {
+    run_config config;
     CLI::App app;
 
-    bool version_flag = false;
-    app.add_flag("-v,--version", version_flag, "Show version information");
-
-    std::string input_file_raw;
-    app.add_option("file", input_file_raw, "Input file to process");
-
-    std::string output_file_raw = "stdout";
-    app.add_option("-o,--output", output_file_raw, "Output file")->default_val("stdout");
-
-    std::vector<std::string> include_paths_raw;
-    app.add_option("-i,--include", include_paths_raw, "Include paths for preprocessing");
-
-    std::vector<std::string> definitions;
-    app.add_option("-d,--define", definitions, "Preprocessor definitions");
-
-    bool remove_comments = false;
-    app.add_flag("--remove-comments", remove_comments, "Remove comments from output");
-
-    std::string end_of_line;
-    app.add_option("--end-of-line", end_of_line, "End-of-line sequence")
+    app.add_flag("-v,--version", config.version_flag, "Show version information");
+    app.add_option("file", config.input_file_raw, "Input file to process");
+    app.add_option("-o,--output", config.output_file_raw, "Output file")->default_val("stdout");
+    app.add_option("-i,--include", config.include_paths_raw, "Include paths for preprocessing");
+    app.add_option("-d,--define", config.definitions, "Preprocessor definitions");
+    app.add_flag("--remove-comments", config.remove_comments, "Remove comments from output");
+    app.add_option("--end-of-line", config.eol_str, "End-of-line sequence")
         ->check(CLI::IsMember({"as-is", "native", "lf", "crlf"}))
-        ->default_val("as-is");
-
-    bool quiet_flag = false;
-    app.add_flag("-q,--quiet", quiet_flag, "Suppress non-error output");
-
-    std::string lang_str;
-    app.add_option("--lang", lang_str, "Language standard")
+        ->default_val("as-is")
+        ->transform(CLI::Transformer(
+            {{"as-is", "as-is"}, {"native", "native"}, {"lf", "lf"}, {"crlf", "crlf"}},
+            CLI::ignore_case));
+    app.add_flag("-q,--quiet", config.quiet_flag, "Suppress non-error output");
+    app.add_option("--lang", config.lang_str, "Language standard")
         ->check(CLI::IsMember({"c99", "cpp98", "cpp11", "cpp17", "cpp20", "cpp23"}))
         ->default_val("cpp23");
 
-    CLI11_PARSE(app, argc, argv);
+    try {
+        app.parse(argc, argv);
+    } catch (const CLI::ParseError& e) {
+        app.exit(e);
+        std::exit(app.exit_code());
+    }
 
+    return config;
+}
+
+void configure_logging(const run_config& config) {
     spdlog::default_logger()->set_pattern("[%^%l%$] %v");
-    if (quiet_flag) {
+    if (config.quiet_flag) {
         spdlog::set_level(spdlog::level::err);
     }
+}
 
-    if (version_flag) {
-        std::cout << PROJECT_VERSION << std::endl;
-        return 0;
-    }
-
+bool resolve_input_path(const std::string& input_file_raw, boost::filesystem::path& path) {
     if (input_file_raw.empty()) {
         spdlog::error("No input files provided. Use --help for usage information.");
-        return 1;
+        return false;
     }
 
     boost::system::error_code ec;
-    auto path = boost::filesystem::canonical(input_file_raw, ec);
+    path = boost::filesystem::canonical(input_file_raw, ec);
     if (ec) {
         spdlog::error("Failed to resolve path '{}': {}", input_file_raw, ec.message());
-        return 1;
+        return false;
     }
     const auto file_size = boost::filesystem::file_size(path, ec);
     if (ec) {
         spdlog::error("Failed to get file size for '{}': {}", path.string(), ec.message());
-        return 1;
+        return false;
     }
     if (file_size == 0) {
         spdlog::warn("File is empty: {}", path.string());
     }
+    return true;
+}
+
+bool load_file_contents(const boost::filesystem::path& path, std::string& contents) {
     std::ifstream file(path.string());
     if (!file.is_open()) {
         spdlog::error("Failed to open file: {}", path.string());
-        return 1;
+        return false;
     }
-    spdlog::info("Processing file: {}", path.string());
-    std::string contents((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
-    file.close();
+    contents.assign((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    return true;
+}
 
-    std::vector<boost::filesystem::path> include_paths;
+bool resolve_include_paths(const std::vector<std::string>& include_paths_raw,
+                           std::vector<boost::filesystem::path>& include_paths) {
+    boost::system::error_code ec;
     for (const auto& inc_path_raw : include_paths_raw) {
         const auto inc_path = boost::filesystem::canonical(inc_path_raw, ec);
         if (ec) {
             spdlog::error("Failed to resolve include path '{}': {}", inc_path_raw, ec.message());
-            return 1;
+            return false;
         }
         if (!boost::filesystem::is_directory(inc_path, ec)) {
             spdlog::error("Include path is not a directory: {}", inc_path.string());
-            return 1;
+            return false;
         }
         include_paths.push_back(inc_path);
     }
+    return true;
+}
 
-    boost::wave::language_support lang;
+boost::wave::language_support parse_language(const std::string& lang_str) {
     if (lang_str == "c99") {
-        lang = boost::wave::language_support::support_c99;
-    } else if (lang_str == "cpp98") {
-        lang = boost::wave::language_support::support_cpp;
-    } else if (lang_str == "cpp11") {
-        lang = boost::wave::language_support::support_cpp11;
-    } else if (lang_str == "cpp17") {
-        lang = boost::wave::language_support::support_cpp17;
-    } else if (lang_str == "cpp20") {
-        lang = boost::wave::language_support::support_cpp20;
-    } else if (lang_str == "cpp23") {
-        lang = boost::wave::language_support::support_cpp2a;
-    } else {
-        std::unreachable();
+        return boost::wave::language_support::support_c99;
+    }
+    if (lang_str == "cpp98") {
+        return boost::wave::language_support::support_cpp;
+    }
+    if (lang_str == "cpp11") {
+        return boost::wave::language_support::support_cpp11;
+    }
+    if (lang_str == "cpp17") {
+        return boost::wave::language_support::support_cpp17;
+    }
+    if (lang_str == "cpp20") {
+        return boost::wave::language_support::support_cpp20;
+    }
+    if (lang_str == "cpp23") {
+        return boost::wave::language_support::support_cpp2a;
+    }
+    std::unreachable();
+}
+
+eol_type parse_eol(const std::string& eol_value) {
+    if (eol_value == "as-is") {
+        return eol_type::as_is;
+    }
+    if (eol_value == "native") {
+        return eol_type::native;
+    }
+    if (eol_value == "lf") {
+        return eol_type::lf;
+    }
+    if (eol_value == "crlf") {
+        return eol_type::crlf;
+    }
+    std::unreachable();
+}
+
+std::string preprocess(const run_config& config, const boost::filesystem::path& path,
+                       const std::vector<boost::filesystem::path>& include_paths,
+                       const std::string& contents) {
+    using lex_iterator_type =
+        boost::wave::cpplexer::lex_iterator<boost::wave::cpplexer::lex_token<>>;
+    using context_type =
+        boost::wave::context<std::string::const_iterator, lex_iterator_type,
+                             boost::wave::iteration_context_policies::load_file_to_string,
+                             custom_hooks>;
+
+    hook_state state;
+    const auto path_str = path.string();
+    context_type ctx(contents.begin(), contents.end(), path_str.c_str(), custom_hooks(state));
+    ctx.set_language(static_cast<boost::wave::language_support>(
+        config.lang | boost::wave::support_option_preserve_comments |
+        boost::wave::support_option_single_line |
+        boost::wave::support_option_include_guard_detection));
+    state.is_cpp = (config.lang != boost::wave::support_c99);
+    state.remove_comments = config.remove_comments;
+    state.eol = config.eol;
+    for (const auto& inc_path : include_paths) {
+        state.add_include_path(ctx, inc_path.string());
+    }
+    ctx.add_macro_definition("__CEQUIP__", true);
+    ctx.add_macro_definition("true=1", true);
+    ctx.add_macro_definition("false=0", true);
+    for (const auto& def : config.definitions) {
+        ctx.add_macro_definition(def, true);
     }
 
-    eol_type eol_setting;
-    if (end_of_line == "as-is") {
-        eol_setting = eol_type::as_is;
-    } else if (end_of_line == "native") {
-        eol_setting = eol_type::native;
-    } else if (end_of_line == "lf") {
-        eol_setting = eol_type::lf;
-    } else if (end_of_line == "crlf") {
-        eol_setting = eol_type::crlf;
-    } else {
-        std::unreachable();
+    try {
+        for (auto it = ctx.begin(); it != ctx.end(); ++it) {
+        }
+    } catch (const boost::wave::preprocess_exception& e) {
+        spdlog::error("Preprocessing error: {} at {}:{}:{}", e.description(),
+                      state.get_correct_path(e.file_name()), e.line_no(), e.column_no());
+        std::exit(1);
+    } catch (boost::wave::cpplexer::lexing_exception& e) {
+        spdlog::error("Lexing error: {} at {}:{}:{}", e.description(),
+                      state.get_correct_path(e.file_name()), e.line_no(), e.column_no());
+        std::exit(1);
     }
+    return state.result.str();
+}
 
-    std::string result;
-    {
-        typedef boost::wave::cpplexer::lex_iterator<boost::wave::cpplexer::lex_token<>>
-            lex_iterator_type;
-        typedef boost::wave::context<std::string::iterator, lex_iterator_type,
-                                     boost::wave::iteration_context_policies::load_file_to_string,
-                                     custom_hooks>
-            context_type;
-        hook_state state;
-        const auto path_str = path.string();
-        context_type ctx(contents.begin(), contents.end(), path_str.c_str(), custom_hooks(state));
-        ctx.set_language(static_cast<boost::wave::language_support>(
-            lang | boost::wave::support_option_preserve_comments |
-            boost::wave::support_option_single_line |
-            boost::wave::support_option_include_guard_detection));
-        state.is_cpp = (lang != boost::wave::support_c99);
-        state.remove_comments = remove_comments;
-        state.eol = eol_setting;
-        for (const auto& inc_path : include_paths) {
-            state.add_include_path(ctx, inc_path.string());
-        }
-        ctx.add_macro_definition("__CEQUIP__", true);
-        ctx.add_macro_definition("true=1", true);
-        ctx.add_macro_definition("false=0", true);
-        for (const auto& def : definitions) {
-            ctx.add_macro_definition(def, true);
-        }
-
-        try {
-            for (auto it = ctx.begin(); it != ctx.end(); ++it) {
-            }
-        } catch (const boost::wave::preprocess_exception& e) {
-            spdlog::error("Preprocessing error: {} at {}:{}:{}", e.description(),
-                          state.get_correct_path(e.file_name()), e.line_no(), e.column_no());
-            return 1;
-        } catch (boost::wave::cpplexer::lexing_exception& e) {
-            spdlog::error("Lexing error: {} at {}:{}:{}", e.description(),
-                          state.get_correct_path(e.file_name()), e.line_no(), e.column_no());
-            return 1;
-        }
-        result = state.result.str();
-    }
-
+bool write_output(const std::string& output_file_raw, const std::string& result) {
     if (output_file_raw == "stdout") {
         std::cout << result;
-    } else if (output_file_raw == "stderr") {
+        return true;
+    }
+    if (output_file_raw == "stderr") {
         std::cerr << result;
-    } else {
-        std::ofstream output_file(output_file_raw);
-        if (!output_file.is_open()) {
-            spdlog::error("Failed to open output file: {}", output_file_raw);
-            return 1;
-        }
-        output_file << result;
-        output_file.close();
-        boost::system::error_code ec_out;
-        const auto output_path = boost::filesystem::canonical(output_file_raw, ec_out);
-        if (ec_out) {
-            spdlog::error("Failed to resolve output file path '{}': {}", output_file_raw,
-                          ec_out.message());
-            return 1;
-        }
-        spdlog::info("Output written to: {}", output_path.string());
+        return true;
+    }
+
+    std::ofstream output_file(output_file_raw);
+    if (!output_file.is_open()) {
+        spdlog::error("Failed to open output file: {}", output_file_raw);
+        return false;
+    }
+    output_file << result;
+    output_file.close();
+
+    boost::system::error_code ec_out;
+    const auto output_path = boost::filesystem::canonical(output_file_raw, ec_out);
+    if (ec_out) {
+        spdlog::error("Failed to resolve output file path '{}': {}", output_file_raw,
+                      ec_out.message());
+        return false;
+    }
+    spdlog::info("Output written to: {}", output_path.string());
+    return true;
+}
+
+int main(int argc, char** argv) {
+    run_config config = parse_cli(argc, argv);
+    configure_logging(config);
+
+    if (config.version_flag) {
+        std::cout << PROJECT_VERSION << std::endl;
+        return 0;
+    }
+
+    config.lang = parse_language(config.lang_str);
+    config.eol = parse_eol(config.eol_str);
+
+    boost::filesystem::path path;
+    if (!resolve_input_path(config.input_file_raw, path)) {
+        return 1;
+    }
+
+    spdlog::info("Processing file: {}", path.string());
+
+    std::string contents;
+    if (!load_file_contents(path, contents)) {
+        return 1;
+    }
+
+    std::vector<boost::filesystem::path> include_paths;
+    if (!resolve_include_paths(config.include_paths_raw, include_paths)) {
+        return 1;
+    }
+
+    std::string result = preprocess(config, path, include_paths, contents);
+
+    if (!write_output(config.output_file_raw, result)) {
+        return 1;
     }
 
     spdlog::info("Preprocessing completed successfully.");
-
     return 0;
 }
