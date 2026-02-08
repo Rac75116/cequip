@@ -309,10 +309,7 @@ run_config parse_cli(int argc, char** argv) {
     app.add_flag("--remove-comments", config.remove_comments, "Remove comments from output");
     app.add_option("--end-of-line", config.eol_str, "End-of-line sequence")
         ->check(CLI::IsMember({"as-is", "native", "lf", "crlf"}))
-        ->default_val("as-is")
-        ->transform(CLI::Transformer(
-            {{"as-is", "as-is"}, {"native", "native"}, {"lf", "lf"}, {"crlf", "crlf"}},
-            CLI::ignore_case));
+        ->default_val("as-is");
     app.add_flag("-q,--quiet", config.quiet_flag, "Suppress non-error output");
     app.add_option("--lang", config.lang_str, "Language standard")
         ->check(CLI::IsMember({"c99", "cpp98", "cpp11", "cpp17", "cpp20", "cpp23"}))
