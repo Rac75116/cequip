@@ -2,6 +2,4 @@
 name = "cequip"
 version = "1.0.0"
 requires-python = ">=3.14"
-dependencies = [
-    "conan>=2.25.2",
-]
+dependencies = ["conan>=2.25.2"]

@@ -14,32 +14,26 @@ jobs:
           - os: ubuntu-latest
             configure: ./scripts/configure.sh
             build: ./scripts/build.sh
-            artifact: build/cequip
             artifact-name: cequip-linux-x64
           - os: ubuntu-24.04-arm
             configure: ./scripts/configure.sh
             build: ./scripts/build.sh
-            artifact: build/cequip
             artifact-name: cequip-linux-arm64
           - os: macos-15-intel
             configure: ./scripts/configure.sh
             build: ./scripts/build.sh
-            artifact: build/cequip
             artifact-name: cequip-macos-x64
           - os: macos-latest
             configure: ./scripts/configure.sh
             build: ./scripts/build.sh
-            artifact: build/cequip
             artifact-name: cequip-macos-arm64
           - os: windows-latest
             configure: ./scripts/configure.bat
             build: ./scripts/build.bat
-            artifact: build/Release/cequip.exe
             artifact-name: cequip-windows-x64
           - os: windows-11-arm
             configure: ./scripts/configure.bat
             build: ./scripts/build.bat
-            artifact: build/Release/cequip.exe
             artifact-name: cequip-windows-arm64
 
     steps:
@@ -84,4 +78,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact-name }}
-          path: ${{ matrix.artifact }}
+          path: build/dist
