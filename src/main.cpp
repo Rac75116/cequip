@@ -23,6 +23,9 @@ struct run_config {
     bool version_flag;
     bool quiet_flag;
     bool remove_comments;
+    bool expand_file_macros;
+    bool expand_line_macros;
+    bool expand_include_level_macros;
     std::string input_file_raw;
     std::string output_file_raw;
     std::vector<std::string> include_paths_raw;
@@ -40,6 +43,9 @@ struct hook_state : boost::noncopyable {
     bool processing_directive = false;
     boost::unordered_flat_map<std::string, std::string> correct_paths;
     bool remove_comments = false;
+    bool expand_file_macros = false;
+    bool expand_line_macros = false;
+    bool expand_include_level_macros = false;
     eol_type eol = eol_type::as_is;
     boost::unordered_flat_set<std::string> included_system_headers;
 
@@ -61,39 +67,6 @@ struct hook_state : boost::noncopyable {
             std::exit(1);
         }
         include_paths.emplace_back(new_path, path);
-    }
-
-    bool find_include_file(std::string& s, std::string& dir, char const* current_file) const {
-        auto it = include_paths.begin();
-        auto include_paths_end = include_paths.end();
-        if (0 != current_file) {
-            boost::filesystem::path file_path(current_file);
-            for (; it != include_paths_end; ++it) {
-                boost::filesystem::path currpath((*it).first.string());
-                if (std::equal(currpath.begin(), currpath.end(), file_path.begin())) {
-                    ++it;
-                    break;
-                }
-            }
-        }
-        for (; it != include_paths_end; ++it) {
-            boost::filesystem::path currpath(s);
-            if (!currpath.has_root_directory()) {
-                currpath = (*it).first.string();
-                currpath /= s;
-            }
-            if (boost::filesystem::is_regular_file(currpath)) {
-                boost::filesystem::path dirpath(s);
-                if (!dirpath.has_root_directory()) {
-                    dirpath = (*it).second;
-                    dirpath /= s;
-                }
-                dir = dirpath.string();
-                s = boost::wave::util::normalize(currpath).string();
-                return true;
-            }
-        }
-        return false;
     }
 };
 
@@ -124,9 +97,14 @@ class custom_hooks : public boost::wave::context_policies::default_preprocessing
     }
 
     template <typename ContextT, typename TokenT, typename ContainerT>
-    bool expanding_object_like_macro(ContextT const&, TokenT const&, ContainerT const&,
+    bool expanding_object_like_macro(ContextT const&, TokenT const& token, ContainerT const&,
                                      TokenT const&) {
-        return !state.processing_directive;
+        if (state.processing_directive) return false;
+        const auto macro_name = token.get_value();
+        if (state.expand_file_macros && macro_name == "__FILE__") return false;
+        if (state.expand_line_macros && macro_name == "__LINE__") return false;
+        if (state.expand_include_level_macros && macro_name == "__INCLUDE_LEVEL__") return false;
+        return true;
     }
 
     template <typename ContextT>
@@ -134,9 +112,7 @@ class custom_hooks : public boost::wave::context_policies::default_preprocessing
                              char const* current_file, std::string& dir_path,
                              std::string& native_name) {
         const auto raw_file_path = file_path;
-        if ((0 == current_file && ctx.find_include_file(file_path, dir_path, false, current_file) &&
-             boost::filesystem::is_regular_file(file_path)) ||
-            state.find_include_file(file_path, dir_path, current_file)) {
+        if (ctx.find_include_file(file_path, dir_path, false, current_file)) {
             native_name = file_path;
             state.correct_paths.emplace(raw_file_path, native_name);
             return true;
@@ -306,6 +282,10 @@ run_config parse_cli(int argc, char** argv) {
     app.add_option("-o,--output", config.output_file_raw, "Output file")->default_val("stdout");
     app.add_option("-i,--include", config.include_paths_raw, "Include paths for preprocessing");
     app.add_option("-d,--define", config.definitions, "Preprocessor definitions");
+    app.add_flag("--expand-file-macros", config.expand_file_macros, "Expand __FILE__ macros");
+    app.add_flag("--expand-line-macros", config.expand_line_macros, "Expand __LINE__ macros");
+    app.add_flag("--expand-include-level-macros", config.expand_include_level_macros,
+                 "Expand __INCLUDE_LEVEL__ macros");
     app.add_flag("--remove-comments", config.remove_comments, "Remove comments from output");
     app.add_option("--end-of-line", config.eol_str, "End-of-line sequence")
         ->check(CLI::IsMember({"as-is", "native", "lf", "crlf"}))
@@ -439,6 +419,9 @@ std::string preprocess(const run_config& config, const boost::filesystem::path& 
         boost::wave::support_option_include_guard_detection));
     state.is_cpp = (config.lang != boost::wave::support_c99);
     state.remove_comments = config.remove_comments;
+    state.expand_file_macros = config.expand_file_macros;
+    state.expand_line_macros = config.expand_line_macros;
+    state.expand_include_level_macros = config.expand_include_level_macros;
     state.eol = config.eol;
     for (const auto& inc_path : include_paths) {
         state.add_include_path(ctx, inc_path.string());
