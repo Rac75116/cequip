@@ -1,0 +1,77 @@
+{
+    "name": "cequip",
+    "build": {
+        "dockerfile": "Dockerfile"
+    },
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "llvm-vs-code-extensions.vscode-clangd",
+                "charliermarsh.ruff",
+                "redhat.vscode-yaml",
+                "tamasfe.even-better-toml",
+                "ms-vscode.cmake-tools"
+            ],
+            "settings": {
+                "editor.formatOnSave": true,
+                "editor.formatOnType": true,
+                "editor.formatOnPaste": false,
+                "editor.insertSpaces": true,
+                "editor.semanticHighlighting.enabled": true,
+                "[json]": {
+                    "editor.defaultFormatter": "vscode.json-language-features"
+                },
+                "[jsonc]": {
+                    "editor.defaultFormatter": "vscode.json-language-features"
+                },
+                "[yaml]": {
+                    "editor.defaultFormatter": "redhat.vscode-yaml"
+                },
+                "[toml]": {
+                    "editor.defaultFormatter": "tamasfe.even-better-toml"
+                },
+                "[cpp]": {
+                    "editor.defaultFormatter": "llvm-vs-code-extensions.vscode-clangd"
+                },
+                "[python]": {
+                    "editor.defaultFormatter": "charliermarsh.ruff"
+                },
+                "editor.tabSize": 4,
+                "terminal.integrated.defaultProfile.windows": "PowerShell",
+                "terminal.integrated.env.windows": {
+                    "PSExecutionPolicyPreference": "RemoteSigned"
+                },
+                "terminal.integrated.defaultProfile.linux": "bash",
+                "files.eol": "\n",
+                "files.insertFinalNewline": true,
+                "files.trimTrailingWhitespace": true,
+                "files.associations": {
+                    ".clang-format": "yaml",
+                    ".clangd": "yaml"
+                },
+                "files.exclude": {
+                    ".cache": true
+                },
+                "search.exclude": {
+                    "build": true,
+                    ".cache": true
+                },
+                "C_Cpp.intelliSenseEngine": "disabled",
+                "cmake.generator": "Ninja",
+                "cmake.buildBeforeRun": false,
+                "cmake.configureOnOpen": false,
+                "clangd.enable": true,
+                "clangd.arguments": [
+                    "--header-insertion=never",
+                    "--function-arg-placeholders=0"
+                ],
+                "ruff.enable": true,
+                "github.copilot.enable": {
+                    "*": true,
+                    "*.txt": false
+                }
+            }
+        }
+    },
+    "remoteUser": "vscode"
+}
