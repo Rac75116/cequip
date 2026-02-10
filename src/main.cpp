@@ -20,17 +20,17 @@
 enum class eol_type { as_is, native, lf, crlf };
 
 struct run_config {
-    bool version_flag = false;
-    bool quiet_flag = false;
-    bool remove_comments = false;
+    bool version_flag;
+    bool quiet_flag;
+    bool remove_comments;
     std::string input_file_raw;
-    std::string output_file_raw = "stdout";
+    std::string output_file_raw;
     std::vector<std::string> include_paths_raw;
     std::vector<std::string> definitions;
-    std::string lang_str = "cpp23";
-    std::string eol_str = "as-is";
-    eol_type eol = eol_type::as_is;
-    boost::wave::language_support lang = boost::wave::language_support::support_cpp2a;
+    std::string lang_str;
+    boost::wave::language_support lang;
+    std::string eol_str;
+    eol_type eol;
 };
 
 struct hook_state : boost::noncopyable {
