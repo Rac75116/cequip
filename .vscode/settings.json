@@ -42,7 +42,6 @@
         "build": true,
         ".cache": true,
     },
-    "C_Cpp.intelliSenseEngine": "disabled",
     "cmake.generator": "Ninja",
     "cmake.buildBeforeRun": false,
     "cmake.configureOnOpen": false,
