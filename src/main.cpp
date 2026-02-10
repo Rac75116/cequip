@@ -112,7 +112,7 @@ class custom_hooks : public boost::wave::context_policies::default_preprocessing
                              char const* current_file, std::string& dir_path,
                              std::string& native_name) {
         const auto raw_file_path = file_path;
-        if (ctx.find_include_file(file_path, dir_path, false, current_file)) {
+        if (ctx.find_include_file(file_path, dir_path, is_system, current_file)) {
             native_name = file_path;
             state.correct_paths.emplace(raw_file_path, native_name);
             return true;
