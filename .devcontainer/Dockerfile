@@ -13,4 +13,4 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-venv \
     && rm -rf /var/lib/apt/lists/*
 
-RUN curl -LsSf https://astral.sh/uv/install.sh | sh -s -- --install-dir /usr/local/bin --no-modify-path
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
