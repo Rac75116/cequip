@@ -1,0 +1,18 @@
+{
+    "name": "cequip",
+    "build": {
+        "dockerfile": "Dockerfile"
+    },
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "llvm-vs-code-extensions.vscode-clangd",
+                "charliermarsh.ruff",
+                "redhat.vscode-yaml",
+                "tamasfe.even-better-toml",
+                "ms-vscode.cmake-tools"
+            ]
+        }
+    },
+    "remoteUser": "vscode"
+}
