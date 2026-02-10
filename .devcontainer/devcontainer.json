@@ -37,10 +37,6 @@
                     "editor.defaultFormatter": "charliermarsh.ruff"
                 },
                 "editor.tabSize": 4,
-                "terminal.integrated.defaultProfile.windows": "PowerShell",
-                "terminal.integrated.env.windows": {
-                    "PSExecutionPolicyPreference": "RemoteSigned"
-                },
                 "terminal.integrated.defaultProfile.linux": "bash",
                 "files.eol": "\n",
                 "files.insertFinalNewline": true,
