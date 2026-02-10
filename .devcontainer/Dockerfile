@@ -8,9 +8,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     git \
     ninja-build \
-    python3 \
-    python3-pip \
-    python3-venv \
     && rm -rf /var/lib/apt/lists/*
 
-RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+RUN curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh
